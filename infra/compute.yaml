@@ -1,0 +1,432 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: >
+  Compute stack for the serverless event management application
+
+Parameters:
+  ProjectName:
+    Type: String
+    Description: Project name used as prefix for resource names
+
+  Environment:
+    Type: String
+    Description: Deployment environment
+    AllowedValues:
+      - dev
+      - qa
+      - prod
+
+  LambdaCodeS3Bucket:
+    Type: String
+    Description: S3 bucket containing Lambda deployment packages
+
+  LambdaCodeS3Key:
+    Type: String
+    Description: S3 key for the Lambda deployment package zip
+
+  EventsLambdaRoleArn:
+    Type: String
+    Description: IAM role ARN for event-related Lambda functions
+
+  NotificationsLambdaRoleArn:
+    Type: String
+    Description: IAM role ARN for notification Lambda functions
+
+  ReportsLambdaRoleArn:
+    Type: String
+    Description: IAM role ARN for report Lambda functions
+
+  EventsTableName:
+    Type: String
+    Description: DynamoDB table name for events
+
+  RegistrationsTableName:
+    Type: String
+    Description: DynamoDB table name for registrations
+
+  NotificationsTableName:
+    Type: String
+    Description: DynamoDB table name for notifications
+
+  ReportsBucketName:
+    Type: String
+    Description: S3 bucket name for reports
+
+  AppSecretArn:
+    Type: String
+    Description: ARN of the application secret
+
+  CognitoUserPoolId:
+    Type: String
+    Description: Cognito User Pool ID
+
+  NotificationsQueueArn:
+    Type: String
+    Description: ARN of the notifications queue
+
+  NotificationsQueueUrl:
+    Type: String
+    Description: URL of the notifications queue
+
+  ReportsQueueArn:
+    Type: String
+    Description: ARN of the reports queue
+
+  ReportsQueueUrl:
+    Type: String
+    Description: URL of the reports queue
+
+Resources:
+
+  # EVENT FUNCTIONS
+
+  CreateEventFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Environment}-create-event
+      Runtime: python
+      Handler: src/handlers/createEvent.handler
+      Role: !Ref EventsLambdaRoleArn
+      MemorySize: 256
+      Timeout: 10
+      Code:
+        S3Bucket: !Ref LambdaCodeS3Bucket
+        S3Key: !Ref LambdaCodeS3Key
+      Environment:
+        Variables:
+          EVENTS_TABLE_NAME: !Ref EventsTableName
+          REGISTRATIONS_TABLE_NAME: !Ref RegistrationsTableName
+          APP_SECRET_ARN: !Ref AppSecretArn
+          USER_POOL_ID: !Ref CognitoUserPoolId
+          ENVIRONMENT: !Ref Environment
+
+  UpdateEventFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Environment}-update-event
+      Runtime: python
+      Handler: src/handlers/updateEvent.handler
+      Role: !Ref EventsLambdaRoleArn
+      MemorySize: 256
+      Timeout: 10
+      Code:
+        S3Bucket: !Ref LambdaCodeS3Bucket
+        S3Key: !Ref LambdaCodeS3Key
+      Environment:
+        Variables:
+          EVENTS_TABLE_NAME: !Ref EventsTableName
+          APP_SECRET_ARN: !Ref AppSecretArn
+          USER_POOL_ID: !Ref CognitoUserPoolId
+          ENVIRONMENT: !Ref Environment
+
+  DeleteEventFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Environment}-delete-event
+      Runtime: python
+      Handler: src/handlers/deleteEvent.handler
+      Role: !Ref EventsLambdaRoleArn
+      MemorySize: 256
+      Timeout: 10
+      Code:
+        S3Bucket: !Ref LambdaCodeS3Bucket
+        S3Key: !Ref LambdaCodeS3Key
+      Environment:
+        Variables:
+          EVENTS_TABLE_NAME: !Ref EventsTableName
+          REGISTRATIONS_TABLE_NAME: !Ref RegistrationsTableName
+          NOTIFICATIONS_QUEUE_URL: !Ref NotificationsQueueUrl
+          APP_SECRET_ARN: !Ref AppSecretArn
+          ENVIRONMENT: !Ref Environment
+
+  GetEventsFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Environment}-get-events
+      Runtime: python
+      Handler: src/handlers/getEvents.handler
+      Role: !Ref EventsLambdaRoleArn
+      MemorySize: 256
+      Timeout: 10
+      Code:
+        S3Bucket: !Ref LambdaCodeS3Bucket
+        S3Key: !Ref LambdaCodeS3Key
+      Environment:
+        Variables:
+          EVENTS_TABLE_NAME: !Ref EventsTableName
+          ENVIRONMENT: !Ref Environment
+
+  RegisterAttendeeFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Environment}-register-attendee
+      Runtime: python
+      Handler: src/handlers/registerAttendee.handler
+      Role: !Ref EventsLambdaRoleArn
+      MemorySize: 256
+      Timeout: 15
+      Code:
+        S3Bucket: !Ref LambdaCodeS3Bucket
+        S3Key: !Ref LambdaCodeS3Key
+      Environment:
+        Variables:
+          EVENTS_TABLE_NAME: !Ref EventsTableName
+          REGISTRATIONS_TABLE_NAME: !Ref RegistrationsTableName
+          NOTIFICATIONS_QUEUE_URL: !Ref NotificationsQueueUrl
+          APP_SECRET_ARN: !Ref AppSecretArn
+          ENVIRONMENT: !Ref Environment
+
+  CancelRegistrationFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Environment}-cancel-registration
+      Runtime: python
+      Handler: src/handlers/cancelRegistration.handler
+      Role: !Ref EventsLambdaRoleArn
+      MemorySize: 256
+      Timeout: 15
+      Code:
+        S3Bucket: !Ref LambdaCodeS3Bucket
+        S3Key: !Ref LambdaCodeS3Key
+      Environment:
+        Variables:
+          EVENTS_TABLE_NAME: !Ref EventsTableName
+          REGISTRATIONS_TABLE_NAME: !Ref RegistrationsTableName
+          APP_SECRET_ARN: !Ref AppSecretArn
+          ENVIRONMENT: !Ref Environment
+
+
+
+  # REPORT FUNCTIONS
+
+  CreateReportFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Environment}-create-report
+      Runtime: python
+      Handler: src/handlers/createReport.handler
+      Role: !Ref ReportsLambdaRoleArn
+      MemorySize: 256
+      Timeout: 10
+      Code:
+        S3Bucket: !Ref LambdaCodeS3Bucket
+        S3Key: !Ref LambdaCodeS3Key
+      Environment:
+        Variables:
+          REPORTS_QUEUE_URL: !Ref ReportsQueueUrl
+          EVENTS_TABLE_NAME: !Ref EventsTableName
+          REGISTRATIONS_TABLE_NAME: !Ref RegistrationsTableName
+          REPORTS_BUCKET_NAME: !Ref ReportsBucketName
+          ENVIRONMENT: !Ref Environment
+
+  GenerateReportFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Environment}-generate-report
+      Runtime: python
+      Handler: src/handlers/generateReport.handler
+      Role: !Ref ReportsLambdaRoleArn
+      MemorySize: 512
+      Timeout: 60
+      Code:
+        S3Bucket: !Ref LambdaCodeS3Bucket
+        S3Key: !Ref LambdaCodeS3Key
+      Environment:
+        Variables:
+          EVENTS_TABLE_NAME: !Ref EventsTableName
+          REGISTRATIONS_TABLE_NAME: !Ref RegistrationsTableName
+          REPORTS_BUCKET_NAME: !Ref ReportsBucketName
+          APP_SECRET_ARN: !Ref AppSecretArn
+          ENVIRONMENT: !Ref Environment
+
+  SendReportFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Environment}-send-report
+      Runtime: python
+      Handler: src/handlers/sendReport.handler
+      Role: !Ref ReportsLambdaRoleArn
+      MemorySize: 256
+      Timeout: 30
+      Code:
+        S3Bucket: !Ref LambdaCodeS3Bucket
+        S3Key: !Ref LambdaCodeS3Key
+      Environment:
+        Variables:
+          REPORTS_BUCKET_NAME: !Ref ReportsBucketName
+          NOTIFICATIONS_QUEUE_URL: !Ref NotificationsQueueUrl
+          APP_SECRET_ARN: !Ref AppSecretArn
+          ENVIRONMENT: !Ref Environment
+
+  ##########################################################
+  # NOTIFICATION FUNCTIONS
+  ##########################################################
+
+  SendNotificationFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Environment}-send-notification
+      Runtime: python
+      Handler: src/handlers/sendNotification.handler
+      Role: !Ref NotificationsLambdaRoleArn
+      MemorySize: 256
+      Timeout: 30
+      Code:
+        S3Bucket: !Ref LambdaCodeS3Bucket
+        S3Key: !Ref LambdaCodeS3Key
+      Environment:
+        Variables:
+          EVENTS_TABLE_NAME: !Ref EventsTableName
+          NOTIFICATIONS_TABLE_NAME: !Ref NotificationsTableName
+          APP_SECRET_ARN: !Ref AppSecretArn
+          ENVIRONMENT: !Ref Environment
+
+  ##########################################################
+  # EVENT SOURCE MAPPINGS
+  ##########################################################
+
+  NotificationsQueueEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !Ref NotificationsQueueArn
+      FunctionName: !Ref SendNotificationFunction
+      BatchSize: 5
+      Enabled: true
+
+  ReportsQueueEventSourceMapping:
+    Type: AWS::Lambda::EventSourceMapping
+    Properties:
+      EventSourceArn: !Ref ReportsQueueArn
+      FunctionName: !Ref GenerateReportFunction
+      BatchSize: 1
+      Enabled: true
+
+  ##########################################################
+  # LOG GROUPS
+  ##########################################################
+
+  CreateEventLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${CreateEventFunction}
+      RetentionInDays: 14
+
+  UpdateEventLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${UpdateEventFunction}
+      RetentionInDays: 14
+
+  DeleteEventLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${DeleteEventFunction}
+      RetentionInDays: 14
+
+  GetEventsLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${GetEventsFunction}
+      RetentionInDays: 14
+
+  RegisterAttendeeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${RegisterAttendeeFunction}
+      RetentionInDays: 14
+
+  CancelRegistrationLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${CancelRegistrationFunction}
+      RetentionInDays: 14
+
+  UpdateEventStatusLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${UpdateEventStatusFunction}
+      RetentionInDays: 14
+
+  CreateReportLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${CreateReportFunction}
+      RetentionInDays: 14
+
+  GenerateReportLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${GenerateReportFunction}
+      RetentionInDays: 14
+
+  SendReportLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${SendReportFunction}
+      RetentionInDays: 14
+
+  SendNotificationLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${SendNotificationFunction}
+      RetentionInDays: 14
+
+Outputs:
+  CreateEventFunctionArn:
+    Description: ARN of create event Lambda function
+    Value: !GetAtt CreateEventFunction.Arn
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-CreateEventFunctionArn
+
+  UpdateEventFunctionArn:
+    Description: ARN of update event Lambda function
+    Value: !GetAtt UpdateEventFunction.Arn
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-UpdateEventFunctionArn
+
+  DeleteEventFunctionArn:
+    Description: ARN of delete event Lambda function
+    Value: !GetAtt DeleteEventFunction.Arn
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-DeleteEventFunctionArn
+
+  GetEventsFunctionArn:
+    Description: ARN of get events Lambda function
+    Value: !GetAtt GetEventsFunction.Arn
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-GetEventsFunctionArn
+
+  RegisterAttendeeFunctionArn:
+    Description: ARN of register attendee Lambda function
+    Value: !GetAtt RegisterAttendeeFunction.Arn
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-RegisterAttendeeFunctionArn
+
+  CancelRegistrationFunctionArn:
+    Description: ARN of cancel registration Lambda function
+    Value: !GetAtt CancelRegistrationFunction.Arn
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-CancelRegistrationFunctionArn
+
+  CreateReportFunctionArn:
+    Description: ARN of create report Lambda function
+    Value: !GetAtt CreateReportFunction.Arn
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-CreateReportFunctionArn
+
+  GenerateReportFunctionArn:
+    Description: ARN of generate report Lambda function
+    Value: !GetAtt GenerateReportFunction.Arn
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-GenerateReportFunctionArn
+
+  SendReportFunctionArn:
+    Description: ARN of send report Lambda function
+    Value: !GetAtt SendReportFunction.Arn
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-SendReportFunctionArn
+
+  SendNotificationFunctionArn:
+    Description: ARN of send notification Lambda function
+    Value: !GetAtt SendNotificationFunction.Arn
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-SendNotificationFunctionArn
