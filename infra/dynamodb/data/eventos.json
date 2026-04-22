@@ -1,0 +1,14 @@
+{
+    "eventId": "EVT-001",
+    "title": "Taller de AWS",
+    "description": "Capacitación en arquitectura serverless",
+    "location": "Auditorio",
+    "startDate": "2026-04-25T08:00:00Z",
+    "endDate": "2026-04-25T12:00:00Z",
+    "capacity": 50,
+    "availableSlots": 20,
+    "status": "abierto",
+    "createdBy": "admin-001",
+    "createdAt": "2026-04-20T10:00:00Z"
+  }
+  

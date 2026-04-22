@@ -1,0 +1,9 @@
+{
+    "plantillaId": "TPL-001",
+    "nombrePlantilla": "Recordatorio 24 horas",
+    "asunto": "Recordatorio de tu evento",
+    "contenido": "Hola {nombre}, te recordamos que el evento {titulo} inicia el {fecha}.",
+    "tipo": "recordatorio_24h",
+    "activo": true,
+    "fechaCreacion": "2026-04-20T09:00:00Z"
+  }

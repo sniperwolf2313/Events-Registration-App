@@ -1,0 +1,9 @@
+{
+    "eventoId": "EVT-001",
+    "usuarioId": "USR-025",
+    "fechaInscripcion": "2026-04-21T14:00:00Z",
+    "estado": "inscrito",
+    "estadoAsistencia": "pendiente",
+    "correo": "usuario@correo.com",
+    "nombreCompleto": "Juan Pérez"
+  }
