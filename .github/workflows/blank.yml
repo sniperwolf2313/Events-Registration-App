@@ -1,0 +1,575 @@
+name: Deploy CloudFormation Stacks
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        type: choice
+        required: true
+        default: dev
+        options:
+          - dev
+          - qa
+          - prod
+
+      deploy_all:
+        description: Deploy all stacks
+        type: boolean
+        required: true
+        default: false
+
+      create_dummy_zip:
+        description: Create and upload dummy Lambda zip
+        type: boolean
+        required: true
+        default: true
+
+      deploy_storage:
+        description: Deploy 01-storage.yaml
+        type: boolean
+        required: true
+        default: false
+
+      deploy_data:
+        description: Deploy 02-data.yaml
+        type: boolean
+        required: true
+        default: false
+
+      deploy_auth:
+        description: Deploy 03-auth.yaml
+        type: boolean
+        required: true
+        default: false
+
+      deploy_messaging:
+        description: Deploy 04-messaging.yaml
+        type: boolean
+        required: true
+        default: false
+
+      deploy_lambdas_events:
+        description: Deploy 05-lambdas-events.yaml
+        type: boolean
+        required: true
+        default: false
+
+      deploy_lambdas_registrations:
+        description: Deploy 06-lambdas-registrations.yaml
+        type: boolean
+        required: true
+        default: false
+
+      deploy_lambdas_reports:
+        description: Deploy 07-lambdas-reports.yaml
+        type: boolean
+        required: true
+        default: false
+
+      deploy_lambdas_notifications:
+        description: Deploy 08-lambdas-notifications.yaml
+        type: boolean
+        required: true
+        default: false
+
+      deploy_api:
+        description: Deploy 09-api.yaml
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  storage:
+    name: Deploy 01-storage
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    if: ${{ inputs.deploy_all || inputs.deploy_storage }}
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      PROJECT_NAME: ${{ vars.PROJECT_NAME || 'event-manager' }}
+      ENVIRONMENT: ${{ inputs.environment }}
+      AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Validate template
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://infra/01-storage.yaml \
+            --region "$AWS_REGION"
+
+      - name: Deploy storage stack
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: ${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-storage
+          template: infra/01-storage.yaml
+          parameter-overrides: >-
+            ProjectName=${{ env.PROJECT_NAME }},
+            Environment=${{ env.ENVIRONMENT }}
+          fail-on-empty-changeset: "false"
+
+  dummy-lambda-artifact:
+    name: Create dummy Lambda artifact
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    needs:
+      - storage
+    if: >-
+      ${{
+        always() &&
+        inputs.create_dummy_zip &&
+        (needs.storage.result == 'success' || needs.storage.result == 'skipped')
+      }}
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      PROJECT_NAME: ${{ vars.PROJECT_NAME || 'event-manager' }}
+      ENVIRONMENT: ${{ inputs.environment }}
+      AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Create and upload dummy Lambda zip
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Getting frontend artifacts bucket from storage stack..."
+
+          LAMBDA_ARTIFACTS_BUCKET=$(aws cloudformation describe-stacks \
+            --stack-name "${PROJECT_NAME}-${ENVIRONMENT}-storage" \
+            --region "${AWS_REGION}" \
+            --query "Stacks[0].Outputs[?OutputKey=='FrontendArtifactsBucketName'].OutputValue | [0]" \
+            --output text)
+
+          if [ -z "$LAMBDA_ARTIFACTS_BUCKET" ] || [ "$LAMBDA_ARTIFACTS_BUCKET" = "None" ]; then
+            echo "Could not find FrontendArtifactsBucketName output."
+            exit 1
+          fi
+
+          echo "Using bucket: ${LAMBDA_ARTIFACTS_BUCKET}"
+
+          mkdir -p .build/dummy-lambda
+
+          cat > .build/dummy-lambda/app.py <<'PY'
+          import json
+
+          def handler(event, context):
+              return {
+                  "statusCode": 501,
+                  "headers": {
+                      "Content-Type": "application/json"
+                  },
+                  "body": json.dumps({
+                      "message": "Dummy lambda deployed."
+                  })
+              }
+          PY
+
+          cd .build/dummy-lambda
+          zip -r ../dummy-lambda.zip app.py
+          cd -
+
+          aws s3 cp .build/dummy-lambda.zip \
+            "s3://${LAMBDA_ARTIFACTS_BUCKET}/Lambda-Artifacts/dummy-lambda/dummy-lambda.zip" \
+            --region "${AWS_REGION}"
+
+          echo "Dummy Lambda artifact uploaded."
+
+  data:
+    name: Deploy 02-data
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    needs:
+      - storage
+    if: >-
+      ${{
+        always() &&
+        (inputs.deploy_all || inputs.deploy_data) &&
+        (needs.storage.result == 'success' || needs.storage.result == 'skipped')
+      }}
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      PROJECT_NAME: ${{ vars.PROJECT_NAME || 'event-manager' }}
+      ENVIRONMENT: ${{ inputs.environment }}
+      AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Validate template
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://infra/02-data.yaml \
+            --region "$AWS_REGION"
+
+      - name: Deploy data stack
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: ${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-data
+          template: infra/02-data.yaml
+          parameter-overrides: >-
+            ProjectName=${{ env.PROJECT_NAME }},
+            Environment=${{ env.ENVIRONMENT }},
+            EnablePointInTimeRecovery=false
+          fail-on-empty-changeset: "false"
+
+  auth:
+    name: Deploy 03-auth
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    needs:
+      - storage
+    if: >-
+      ${{
+        always() &&
+        (inputs.deploy_all || inputs.deploy_auth) &&
+        (needs.storage.result == 'success' || needs.storage.result == 'skipped')
+      }}
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      PROJECT_NAME: ${{ vars.PROJECT_NAME || 'event-manager' }}
+      ENVIRONMENT: ${{ inputs.environment }}
+      CALLBACK_URL: ${{ vars.CALLBACK_URL }}
+      LOGOUT_URL: ${{ vars.LOGOUT_URL }}
+      AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Validate template
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://infra/03-auth.yaml \
+            --region "$AWS_REGION"
+
+      - name: Deploy auth stack
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: ${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-auth
+          template: infra/03-auth.yaml
+          parameter-overrides: >-
+            ProjectName=${{ env.PROJECT_NAME }},
+            Environment=${{ env.ENVIRONMENT }},
+            CallbackUrl=${{ env.CALLBACK_URL }},
+            LogoutUrl=${{ env.LOGOUT_URL }}
+          fail-on-empty-changeset: "false"
+
+  messaging:
+    name: Deploy 04-messaging
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    needs:
+      - storage
+    if: >-
+      ${{
+        always() &&
+        (inputs.deploy_all || inputs.deploy_messaging) &&
+        (needs.storage.result == 'success' || needs.storage.result == 'skipped')
+      }}
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      PROJECT_NAME: ${{ vars.PROJECT_NAME || 'event-manager' }}
+      ENVIRONMENT: ${{ inputs.environment }}
+      AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Validate template
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://infra/04-messaging.yaml \
+            --region "$AWS_REGION"
+
+      - name: Deploy messaging stack
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: ${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-messaging
+          template: infra/04-messaging.yaml
+          parameter-overrides: >-
+            ProjectName=${{ env.PROJECT_NAME }},
+            Environment=${{ env.ENVIRONMENT }}
+          fail-on-empty-changeset: "false"
+
+  lambdas-events:
+    name: Deploy 05-lambdas-events
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    needs:
+      - data
+      - messaging
+      - dummy-lambda-artifact
+    if: >-
+      ${{
+        always() &&
+        (inputs.deploy_all || inputs.deploy_lambdas_events) &&
+        (needs.data.result == 'success' || needs.data.result == 'skipped') &&
+        (needs.messaging.result == 'success' || needs.messaging.result == 'skipped') &&
+        (needs.dummy-lambda-artifact.result == 'success' || needs.dummy-lambda-artifact.result == 'skipped')
+      }}
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      PROJECT_NAME: ${{ vars.PROJECT_NAME || 'event-manager' }}
+      ENVIRONMENT: ${{ inputs.environment }}
+      SENDER_EMAIL: ${{ vars.SENDER_EMAIL }}
+      AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Validate template
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://infra/05-lambdas-events.yaml \
+            --region "$AWS_REGION"
+
+      - name: Deploy lambdas events stack
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: ${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-lambdas-events
+          template: infra/05-lambdas-events.yaml
+          capabilities: CAPABILITY_NAMED_IAM
+          parameter-overrides: >-
+            ProjectName=${{ env.PROJECT_NAME }},
+            Environment=${{ env.ENVIRONMENT }},
+            SenderEmail=${{ env.SENDER_EMAIL }}
+          fail-on-empty-changeset: "false"
+
+  lambdas-registrations:
+    name: Deploy 06-lambdas-registrations
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    needs:
+      - data
+      - messaging
+      - dummy-lambda-artifact
+    if: >-
+      ${{
+        always() &&
+        (inputs.deploy_all || inputs.deploy_lambdas_registrations) &&
+        (needs.data.result == 'success' || needs.data.result == 'skipped') &&
+        (needs.messaging.result == 'success' || needs.messaging.result == 'skipped') &&
+        (needs.dummy-lambda-artifact.result == 'success' || needs.dummy-lambda-artifact.result == 'skipped')
+      }}
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      PROJECT_NAME: ${{ vars.PROJECT_NAME || 'event-manager' }}
+      ENVIRONMENT: ${{ inputs.environment }}
+      SENDER_EMAIL: ${{ vars.SENDER_EMAIL }}
+      AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Validate template
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://infra/06-lambdas-registrations.yaml \
+            --region "$AWS_REGION"
+
+      - name: Deploy lambdas registrations stack
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: ${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-lambdas-registration
+          template: infra/06-lambdas-registrations.yaml
+          capabilities: CAPABILITY_NAMED_IAM
+          parameter-overrides: >-
+            ProjectName=${{ env.PROJECT_NAME }},
+            Environment=${{ env.ENVIRONMENT }},
+            SenderEmail=${{ env.SENDER_EMAIL }}
+          fail-on-empty-changeset: "false"
+
+  lambdas-reports:
+    name: Deploy 07-lambdas-reports
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    needs:
+      - data
+      - messaging
+      - dummy-lambda-artifact
+    if: >-
+      ${{
+        always() &&
+        (inputs.deploy_all || inputs.deploy_lambdas_reports) &&
+        (needs.data.result == 'success' || needs.data.result == 'skipped') &&
+        (needs.messaging.result == 'success' || needs.messaging.result == 'skipped') &&
+        (needs.dummy-lambda-artifact.result == 'success' || needs.dummy-lambda-artifact.result == 'skipped')
+      }}
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      PROJECT_NAME: ${{ vars.PROJECT_NAME || 'event-manager' }}
+      ENVIRONMENT: ${{ inputs.environment }}
+      SENDER_EMAIL: ${{ vars.SENDER_EMAIL }}
+      AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Validate template
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://infra/07-lambdas-reports.yaml \
+            --region "$AWS_REGION"
+
+      - name: Deploy lambdas reports stack
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: ${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-lambdas-report
+          template: infra/07-lambdas-reports.yaml
+          capabilities: CAPABILITY_NAMED_IAM
+          parameter-overrides: >-
+            ProjectName=${{ env.PROJECT_NAME }},
+            Environment=${{ env.ENVIRONMENT }},
+            SenderEmail=${{ env.SENDER_EMAIL }}
+          fail-on-empty-changeset: "false"
+
+  lambdas-notifications:
+    name: Deploy 08-lambdas-notifications
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    needs:
+      - data
+      - messaging
+      - dummy-lambda-artifact
+    if: >-
+      ${{
+        always() &&
+        (inputs.deploy_all || inputs.deploy_lambdas_notifications) &&
+        (needs.data.result == 'success' || needs.data.result == 'skipped') &&
+        (needs.messaging.result == 'success' || needs.messaging.result == 'skipped') &&
+        (needs.dummy-lambda-artifact.result == 'success' || needs.dummy-lambda-artifact.result == 'skipped')
+      }}
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      PROJECT_NAME: ${{ vars.PROJECT_NAME || 'event-manager' }}
+      ENVIRONMENT: ${{ inputs.environment }}
+      SENDER_EMAIL: ${{ vars.SENDER_EMAIL }}
+      AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Validate template
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://infra/08-lambdas-notifications.yaml \
+            --region "$AWS_REGION"
+
+      - name: Deploy lambdas notifications stack
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: ${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-lambdas-notifications
+          template: infra/08-lambdas-notifications.yaml
+          capabilities: CAPABILITY_NAMED_IAM
+          parameter-overrides: >-
+            ProjectName=${{ env.PROJECT_NAME }},
+            Environment=${{ env.ENVIRONMENT }},
+            SenderEmail=${{ env.SENDER_EMAIL }}
+          fail-on-empty-changeset: "false"
+
+  api:
+    name: Deploy 09-api
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    needs:
+      - auth
+      - lambdas-events
+      - lambdas-registrations
+      - lambdas-reports
+      - lambdas-notifications
+    if: >-
+      ${{
+        always() &&
+        (inputs.deploy_all || inputs.deploy_api) &&
+        (needs.auth.result == 'success' || needs.auth.result == 'skipped') &&
+        (needs.lambdas-events.result == 'success' || needs.lambdas-events.result == 'skipped') &&
+        (needs.lambdas-registrations.result == 'success' || needs.lambdas-registrations.result == 'skipped') &&
+        (needs.lambdas-reports.result == 'success' || needs.lambdas-reports.result == 'skipped') &&
+        (needs.lambdas-notifications.result == 'success' || needs.lambdas-notifications.result == 'skipped')
+      }}
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
+      PROJECT_NAME: ${{ vars.PROJECT_NAME || 'event-manager' }}
+      ENVIRONMENT: ${{ inputs.environment }}
+      AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Validate template
+        run: |
+          aws cloudformation validate-template \
+            --template-body file://infra/09-api.yaml \
+            --region "$AWS_REGION"
+
+      - name: Deploy API stack
+        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        with:
+          name: ${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-compute-api
+          template: infra/09-api.yaml
+          capabilities: CAPABILITY_NAMED_IAM
+          parameter-overrides: >-
+            ProjectName=${{ env.PROJECT_NAME }},
+            Environment=${{ env.ENVIRONMENT }}
+          fail-on-empty-changeset: "false"
