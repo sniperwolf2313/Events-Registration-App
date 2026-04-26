@@ -1,0 +1,251 @@
+name: Deploy Lambda Code
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Target environment
+        type: choice
+        required: true
+        default: dev
+        options:
+          - dev
+          - qa
+          - prod
+
+      lambda_name:
+        description: Lambda to deploy
+        type: choice
+        required: true
+        default: all
+        options:
+          - all
+          - create-event
+          - get-event
+          - update-event
+          - delete-event
+          - register-attendee
+          - cancel-register
+          - create-report
+          - generate-report
+          - send-report
+          - send-notification
+
+      dry_run:
+        description: Validate only, do not update Lambda code
+        type: boolean
+        required: true
+        default: false
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: deploy-lambdas-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare Lambda deployment matrix
+    runs-on: ubuntu-latest
+
+    outputs:
+      lambdas: ${{ steps.set-matrix.outputs.lambdas }}
+
+    steps:
+      - name: Build matrix
+        id: set-matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          SELECTED_LAMBDA="${{ inputs.lambda_name }}"
+
+          if [ "$SELECTED_LAMBDA" = "all" ]; then
+            cat > lambdas.json <<'JSON'
+          [
+            {"folder":"create-event","suffix":"CreateEvent"},
+            {"folder":"get-event","suffix":"GetEvent"},
+            {"folder":"update-event","suffix":"UpdateEvent"},
+            {"folder":"delete-event","suffix":"DeleteEvent"},
+            {"folder":"register-attendee","suffix":"RegisterAttendee"},
+            {"folder":"cancel-register","suffix":"CancelRegister"},
+            {"folder":"create-report","suffix":"CreateReport"},
+            {"folder":"generate-report","suffix":"GenerateReport"},
+            {"folder":"send-report","suffix":"SendReport"},
+            {"folder":"send-notification","suffix":"SendNotification"}
+          ]
+          JSON
+          else
+            case "$SELECTED_LAMBDA" in
+              create-event) SUFFIX="CreateEvent" ;;
+              get-event) SUFFIX="GetEvent" ;;
+              update-event) SUFFIX="UpdateEvent" ;;
+              delete-event) SUFFIX="DeleteEvent" ;;
+              register-attendee) SUFFIX="RegisterAttendee" ;;
+              cancel-register) SUFFIX="CancelRegister" ;;
+              create-report) SUFFIX="CreateReport" ;;
+              generate-report) SUFFIX="GenerateReport" ;;
+              send-report) SUFFIX="SendReport" ;;
+              send-notification) SUFFIX="SendNotification" ;;
+              *)
+                echo "Unknown lambda: $SELECTED_LAMBDA"
+                exit 1
+                ;;
+            esac
+
+            jq -nc --arg folder "$SELECTED_LAMBDA" --arg suffix "$SUFFIX" \
+              '[{"folder":$folder,"suffix":$suffix}]' > lambdas.json
+          fi
+
+          echo "Generated matrix:"
+          cat lambdas.json
+
+          echo "lambdas=$(cat lambdas.json | jq -c .)" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    name: Deploy ${{ matrix.lambda.folder }}
+    runs-on: ubuntu-latest
+    environment: ${{ inputs.environment }}
+    needs:
+      - prepare
+
+    strategy:
+      fail-fast: false
+      matrix:
+        lambda: ${{ fromJson(needs.prepare.outputs.lambdas) }}
+
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      PROJECT_NAME: ${{ vars.PROJECT_NAME }}
+      ENVIRONMENT: ${{ inputs.environment }}
+      AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+      DRY_RUN: ${{ inputs.dry_run }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Validate AWS identity
+        shell: bash
+        run: |
+          aws sts get-caller-identity
+
+      - name: Resolve Lambda artifacts bucket
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          BUCKET=$(aws cloudformation list-exports \
+            --region "$AWS_REGION" \
+            --query "Exports[?Name=='${PROJECT_NAME}-${ENVIRONMENT}-FrontendArtifactsBucketName'].Value | [0]" \
+            --output text)
+
+          if [ -z "$BUCKET" ] || [ "$BUCKET" = "None" ]; then
+            BUCKET=$(aws cloudformation list-exports \
+              --region "$AWS_REGION" \
+              --query "Exports[?Name=='${PROJECT_NAME}-${ENVIRONMENT}-FrontendArtifactsBucketName'].Value | [0]" \
+              --output text)
+          fi
+
+          if [ -z "$BUCKET" ] || [ "$BUCKET" = "None" ]; then
+            echo "Could not resolve Lambda artifacts bucket from CloudFormation exports."
+            exit 1
+          fi
+
+          echo "LAMBDA_ARTIFACTS_BUCKET=$BUCKET" >> "$GITHUB_ENV"
+          echo "Using Lambda artifacts bucket: $BUCKET"
+
+      - name: Validate Lambda source folder
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          LAMBDA_FOLDER="${{ matrix.lambda.folder }}"
+
+          if [ ! -d "src/functions/${LAMBDA_FOLDER}" ]; then
+            echo "Missing folder: src/functions/${LAMBDA_FOLDER}"
+            exit 1
+          fi
+
+          if [ ! -f "src/functions/${LAMBDA_FOLDER}/app.py" ]; then
+            echo "Missing handler file: src/functions/${LAMBDA_FOLDER}/app.py"
+            exit 1
+          fi
+
+      - name: Build Lambda artifact directory
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          LAMBDA_FOLDER="${{ matrix.lambda.folder }}"
+          BUILD_DIR=".build/${LAMBDA_FOLDER}"
+
+          rm -rf "$BUILD_DIR"
+          mkdir -p "$BUILD_DIR"
+
+          cp -r "src/functions/${LAMBDA_FOLDER}/." "$BUILD_DIR/"
+
+          if [ -d "src/shared" ]; then
+            cp -r src/shared/* "$BUILD_DIR/"
+          fi
+
+          if [ -f "src/functions/${LAMBDA_FOLDER}/requirements.txt" ] && [ -s "src/functions/${LAMBDA_FOLDER}/requirements.txt" ]; then
+            python -m pip install --upgrade pip
+            pip install \
+              -r "src/functions/${LAMBDA_FOLDER}/requirements.txt" \
+              -t "$BUILD_DIR"
+          fi
+
+          find "$BUILD_DIR" -type d -name "__pycache__" -prune -exec rm -rf {} +
+          find "$BUILD_DIR" -type f -name "*.pyc" -delete
+
+          echo "Artifact directory ready:"
+          find "$BUILD_DIR" -maxdepth 2 -type f | sort
+
+      - name: Check Lambda exists
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          FUNCTION_NAME="${PROJECT_NAME}-${ENVIRONMENT}-${{ matrix.lambda.suffix }}"
+
+          aws lambda get-function-configuration \
+            --function-name "$FUNCTION_NAME" \
+            --region "$AWS_REGION" \
+            --query "{FunctionName:FunctionName,Runtime:Runtime,Handler:Handler,LastModified:LastModified}" \
+            --output table
+
+      - name: Deploy Lambda with AWS Lambda Deploy Action
+        uses: aws-actions/aws-lambda-deploy@v1.1.0
+        with:
+          function-name: ${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-${{ matrix.lambda.suffix }}
+          code-artifacts-dir: .build/${{ matrix.lambda.folder }}
+          handler: app.handler
+          runtime: python3.12
+          architectures: arm64
+          s3-bucket: ${{ env.LAMBDA_ARTIFACTS_BUCKET }}
+          s3-key: Lambda-Artifacts/functions/${{ matrix.lambda.folder }}/latest.zip
+          publish: false
+          dry-run: ${{ env.DRY_RUN }}
+
+      - name: Show deployed Lambda configuration
+        if: ${{ inputs.dry_run == false }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          FUNCTION_NAME="${PROJECT_NAME}-${ENVIRONMENT}-${{ matrix.lambda.suffix }}"
+
+          aws lambda get-function-configuration \
+            --function-name "$FUNCTION_NAME" \
+            --region "$AWS_REGION" \
+            --query "{FunctionName:FunctionName,Runtime:Runtime,Handler:Handler,LastModified:LastModified,CodeSize:CodeSize}" \
+            --output table
