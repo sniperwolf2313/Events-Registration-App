@@ -90,8 +90,8 @@ jobs:
     environment: ${{ inputs.environment }}
     if: ${{ inputs.deploy_all || inputs.deploy_storage }}
     env:
-      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
-      PROJECT_NAME: ${{ vars.PROJECT_NAME || 'event-manager' }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      PROJECT_NAME: ${{ vars.PROJECT_NAME }}
       ENVIRONMENT: ${{ inputs.environment }}
       AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
 
@@ -134,8 +134,8 @@ jobs:
         (needs.storage.result == 'success' || needs.storage.result == 'skipped')
       }}
     env:
-      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
-      PROJECT_NAME: ${{ vars.PROJECT_NAME || 'event-manager' }}
+      AWS_REGION: ${{ vars.AWS_REGION  }}
+      PROJECT_NAME: ${{ vars.PROJECT_NAME }}
       ENVIRONMENT: ${{ inputs.environment }}
       AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
 
@@ -209,8 +209,8 @@ jobs:
         (needs.storage.result == 'success' || needs.storage.result == 'skipped')
       }}
     env:
-      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
-      PROJECT_NAME: ${{ vars.PROJECT_NAME || 'event-manager' }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      PROJECT_NAME: ${{ vars.PROJECT_NAME }}
       ENVIRONMENT: ${{ inputs.environment }}
       AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
 
@@ -252,8 +252,8 @@ jobs:
         (needs.storage.result == 'success' || needs.storage.result == 'skipped')
       }}
     env:
-      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
-      PROJECT_NAME: ${{ vars.PROJECT_NAME || 'event-manager' }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      PROJECT_NAME: ${{ vars.PROJECT_NAME }}
       ENVIRONMENT: ${{ inputs.environment }}
       CALLBACK_URL: ${{ vars.CALLBACK_URL }}
       LOGOUT_URL: ${{ vars.LOGOUT_URL }}
@@ -298,8 +298,8 @@ jobs:
         (needs.storage.result == 'success' || needs.storage.result == 'skipped')
       }}
     env:
-      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
-      PROJECT_NAME: ${{ vars.PROJECT_NAME || 'event-manager' }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      PROJECT_NAME: ${{ vars.PROJECT_NAME }}
       ENVIRONMENT: ${{ inputs.environment }}
       AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
 
@@ -344,8 +344,8 @@ jobs:
         (needs.dummy-lambda-artifact.result == 'success' || needs.dummy-lambda-artifact.result == 'skipped')
       }}
     env:
-      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
-      PROJECT_NAME: ${{ vars.PROJECT_NAME || 'event-manager' }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      PROJECT_NAME: ${{ vars.PROJECT_NAME }}
       ENVIRONMENT: ${{ inputs.environment }}
       SENDER_EMAIL: ${{ vars.SENDER_EMAIL }}
       AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
@@ -393,8 +393,8 @@ jobs:
         (needs.dummy-lambda-artifact.result == 'success' || needs.dummy-lambda-artifact.result == 'skipped')
       }}
     env:
-      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
-      PROJECT_NAME: ${{ vars.PROJECT_NAME || 'event-manager' }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      PROJECT_NAME: ${{ vars.PROJECT_NAME }}
       ENVIRONMENT: ${{ inputs.environment }}
       SENDER_EMAIL: ${{ vars.SENDER_EMAIL }}
       AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
@@ -442,8 +442,8 @@ jobs:
         (needs.dummy-lambda-artifact.result == 'success' || needs.dummy-lambda-artifact.result == 'skipped')
       }}
     env:
-      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
-      PROJECT_NAME: ${{ vars.PROJECT_NAME || 'event-manager' }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      PROJECT_NAME: ${{ vars.PROJECT_NAME }}
       ENVIRONMENT: ${{ inputs.environment }}
       SENDER_EMAIL: ${{ vars.SENDER_EMAIL }}
       AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
@@ -491,8 +491,8 @@ jobs:
         (needs.dummy-lambda-artifact.result == 'success' || needs.dummy-lambda-artifact.result == 'skipped')
       }}
     env:
-      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
-      PROJECT_NAME: ${{ vars.PROJECT_NAME || 'event-manager' }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      PROJECT_NAME: ${{ vars.PROJECT_NAME }}
       ENVIRONMENT: ${{ inputs.environment }}
       SENDER_EMAIL: ${{ vars.SENDER_EMAIL }}
       AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
@@ -544,8 +544,8 @@ jobs:
         (needs.lambdas-notifications.result == 'success' || needs.lambdas-notifications.result == 'skipped')
       }}
     env:
-      AWS_REGION: ${{ vars.AWS_REGION || 'us-east-1' }}
-      PROJECT_NAME: ${{ vars.PROJECT_NAME || 'event-manager' }}
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      PROJECT_NAME: ${{ vars.PROJECT_NAME }}
       ENVIRONMENT: ${{ inputs.environment }}
       AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
 
