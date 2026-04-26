@@ -1,0 +1,261 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: HTTP API Gateway, Cognito JWT authorizer, Lambda integrations, and
+  API invoke permissions.
+Parameters:
+  ProjectName:
+    Type: String
+    Default: event-manager
+    AllowedPattern: ^[a-z][a-z0-9-]{2,30}$
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - qa
+      - prod
+  CorsAllowOrigin:
+    Type: String
+    Default: '*'
+  LambdaLogRetentionDays:
+    Type: Number
+    Default: 14
+Resources:
+  HttpApiAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/apigateway/${ProjectName}-${Environment}-http-api
+      RetentionInDays: !Ref LambdaLogRetentionDays
+  HttpApi:
+    Type: AWS::ApiGatewayV2::Api
+    Properties:
+      Name: !Sub ${ProjectName}-${Environment}-http-api
+      ProtocolType: HTTP
+      CorsConfiguration:
+        AllowOrigins:
+          - !Ref CorsAllowOrigin
+        AllowHeaders:
+          - Authorization
+          - Content-Type
+        AllowMethods:
+          - GET
+          - POST
+          - PUT
+          - DELETE
+          - OPTIONS
+        MaxAge: 300
+  JwtAuthorizer:
+    Type: AWS::ApiGatewayV2::Authorizer
+    Properties:
+      ApiId: !Ref HttpApi
+      AuthorizerType: JWT
+      IdentitySource:
+        - $request.header.Authorization
+      Name: cognito-jwt-authorizer
+      JwtConfiguration:
+        Audience:
+          - !ImportValue
+            Fn::Sub: ${ProjectName}-${Environment}-UserPoolClientId
+        Issuer: !ImportValue
+          Fn::Sub: ${ProjectName}-${Environment}-UserPoolIssuer
+  DefaultStage:
+    Type: AWS::ApiGatewayV2::Stage
+    Properties:
+      ApiId: !Ref HttpApi
+      StageName: $default
+      AutoDeploy: true
+      AccessLogSettings:
+        DestinationArn: !GetAtt HttpApiAccessLogGroup.Arn
+        Format: '{"requestId":"$context.requestId","ip":"$context.identity.sourceIp","requestTime":"$context.requestTime","httpMethod":"$context.httpMethod","routeKey":"$context.routeKey","status":"$context.status","protocol":"$context.protocol","responseLength":"$context.responseLength"}'
+  GetEventsIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !ImportValue
+        Fn::Sub: ${ProjectName}-${Environment}-GetEventFunctionArn
+      PayloadFormatVersion: '2.0'
+  GetEventsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /events
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${GetEventsIntegration}
+  GetEventsEventidIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !ImportValue
+        Fn::Sub: ${ProjectName}-${Environment}-GetEventFunctionArn
+      PayloadFormatVersion: '2.0'
+  GetEventsEventidRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: GET /events/{eventId}
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${GetEventsEventidIntegration}
+  PostEventsIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !ImportValue
+        Fn::Sub: ${ProjectName}-${Environment}-CreateEventFunctionArn
+      PayloadFormatVersion: '2.0'
+  PostEventsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /events
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${PostEventsIntegration}
+  PutEventsEventidIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !ImportValue
+        Fn::Sub: ${ProjectName}-${Environment}-UpdateEventFunctionArn
+      PayloadFormatVersion: '2.0'
+  PutEventsEventidRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: PUT /events/{eventId}
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${PutEventsEventidIntegration}
+  DeleteEventsEventidIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !ImportValue
+        Fn::Sub: ${ProjectName}-${Environment}-DeleteEventFunctionArn
+      PayloadFormatVersion: '2.0'
+  DeleteEventsEventidRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: DELETE /events/{eventId}
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${DeleteEventsEventidIntegration}
+  PostEventsEventidRegistrationsIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !ImportValue
+        Fn::Sub: ${ProjectName}-${Environment}-RegisterAttendeeFunctionArn
+      PayloadFormatVersion: '2.0'
+  PostEventsEventidRegistrationsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /events/{eventId}/registrations
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${PostEventsEventidRegistrationsIntegration}
+  DeleteEventsEventidRegistrationsUseridIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !ImportValue
+        Fn::Sub: ${ProjectName}-${Environment}-CancelRegisterFunctionArn
+      PayloadFormatVersion: '2.0'
+  DeleteEventsEventidRegistrationsUseridRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: DELETE /events/{eventId}/registrations/{userId}
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${DeleteEventsEventidRegistrationsUseridIntegration}
+  PostReportsIntegration:
+    Type: AWS::ApiGatewayV2::Integration
+    Properties:
+      ApiId: !Ref HttpApi
+      IntegrationType: AWS_PROXY
+      IntegrationUri: !ImportValue
+        Fn::Sub: ${ProjectName}-${Environment}-CreateReportFunctionArn
+      PayloadFormatVersion: '2.0'
+  PostReportsRoute:
+    Type: AWS::ApiGatewayV2::Route
+    Properties:
+      ApiId: !Ref HttpApi
+      RouteKey: POST /reports
+      AuthorizationType: JWT
+      AuthorizerId: !Ref JwtAuthorizer
+      Target: !Sub integrations/${PostReportsIntegration}
+  CancelRegisterApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !ImportValue
+        Fn::Sub: ${ProjectName}-${Environment}-CancelRegisterFunctionName
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*
+  CreateEventApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !ImportValue
+        Fn::Sub: ${ProjectName}-${Environment}-CreateEventFunctionName
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*
+  CreateReportApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !ImportValue
+        Fn::Sub: ${ProjectName}-${Environment}-CreateReportFunctionName
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*
+  DeleteEventApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !ImportValue
+        Fn::Sub: ${ProjectName}-${Environment}-DeleteEventFunctionName
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*
+  GetEventApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !ImportValue
+        Fn::Sub: ${ProjectName}-${Environment}-GetEventFunctionName
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*
+  RegisterAttendeeApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !ImportValue
+        Fn::Sub: ${ProjectName}-${Environment}-RegisterAttendeeFunctionName
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*
+  UpdateEventApiPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      Action: lambda:InvokeFunction
+      FunctionName: !ImportValue
+        Fn::Sub: ${ProjectName}-${Environment}-UpdateEventFunctionName
+      Principal: apigateway.amazonaws.com
+      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*
+Outputs:
+  HttpApiId:
+    Value: !Ref HttpApi
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-HttpApiId
+  HttpApiEndpoint:
+    Value: !GetAtt HttpApi.ApiEndpoint
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-HttpApiEndpoint

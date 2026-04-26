@@ -1,0 +1,252 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: |
+  DynamoDB data layer for serverless event management. Tables are optimized for known access patterns and use pay-per-request capacity to keep the MVP operationally simple.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: event-manager
+    AllowedPattern: ^[a-z][a-z0-9-]{2,30}$
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - qa
+      - prod
+  EnablePointInTimeRecovery:
+    Type: String
+    Default: 'false'
+    AllowedValues:
+      - 'true'
+      - 'false'
+
+Conditions:
+  UsePITR: !Equals
+    - !Ref EnablePointInTimeRecovery
+    - 'true'
+
+Resources:
+  EventsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub ${ProjectName}-${Environment}-events
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: eventId
+          AttributeType: S
+        - AttributeName: status
+          AttributeType: S
+        - AttributeName: startDate
+          AttributeType: S
+        - AttributeName: createdBy
+          AttributeType: S
+        - AttributeName: createdAt
+          AttributeType: S
+      KeySchema:
+        - AttributeName: eventId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: GSI1_StatusStartDate
+          KeySchema:
+            - AttributeName: status
+              KeyType: HASH
+            - AttributeName: startDate
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: GSI2_CreatedByCreatedAt
+          KeySchema:
+            - AttributeName: createdBy
+              KeyType: HASH
+            - AttributeName: createdAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: !If
+          - UsePITR
+          - true
+          - false
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+
+  RegistrationsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub ${ProjectName}-${Environment}-registrations
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: eventId
+          AttributeType: S
+        - AttributeName: userId
+          AttributeType: S
+        - AttributeName: registrationDate
+          AttributeType: S
+        - AttributeName: eventStatusKey
+          AttributeType: S
+      KeySchema:
+        - AttributeName: eventId
+          KeyType: HASH
+        - AttributeName: userId
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: GSI1_UserRegistrations
+          KeySchema:
+            - AttributeName: userId
+              KeyType: HASH
+            - AttributeName: registrationDate
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: GSI2_EventStatusRegistrations
+          KeySchema:
+            - AttributeName: eventStatusKey
+              KeyType: HASH
+            - AttributeName: registrationDate
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: !If
+          - UsePITR
+          - true
+          - false
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+
+  NotificationTemplatesTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub ${ProjectName}-${Environment}-notification-templates
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: templateId
+          AttributeType: S
+        - AttributeName: templateTypeStatus
+          AttributeType: S
+        - AttributeName: updatedAt
+          AttributeType: S
+      KeySchema:
+        - AttributeName: templateId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: GSI1_TemplateTypeStatus
+          KeySchema:
+            - AttributeName: templateTypeStatus
+              KeyType: HASH
+            - AttributeName: updatedAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: !If
+          - UsePITR
+          - true
+          - false
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+
+  ReportsTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
+    Properties:
+      TableName: !Sub ${ProjectName}-${Environment}-reports
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: reportId
+          AttributeType: S
+        - AttributeName: requestedBy
+          AttributeType: S
+        - AttributeName: createdAt
+          AttributeType: S
+        - AttributeName: reportStatus
+          AttributeType: S
+      KeySchema:
+        - AttributeName: reportId
+          KeyType: HASH
+      GlobalSecondaryIndexes:
+        - IndexName: GSI1_RequestedByCreatedAt
+          KeySchema:
+            - AttributeName: requestedBy
+              KeyType: HASH
+            - AttributeName: createdAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+        - IndexName: GSI2_StatusCreatedAt
+          KeySchema:
+            - AttributeName: reportStatus
+              KeyType: HASH
+            - AttributeName: createdAt
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      SSESpecification:
+        SSEEnabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: !If
+          - UsePITR
+          - true
+          - false
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+
+Outputs:
+  EventsTableName:
+    Value: !Ref EventsTable
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-EventsTableName
+  EventsTableArn:
+    Value: !GetAtt EventsTable.Arn
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-EventsTableArn
+  RegistrationsTableName:
+    Value: !Ref RegistrationsTable
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-RegistrationsTableName
+  RegistrationsTableArn:
+    Value: !GetAtt RegistrationsTable.Arn
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-RegistrationsTableArn
+  NotificationTemplatesTableName:
+    Value: !Ref NotificationTemplatesTable
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-NotificationTemplatesTableName
+  NotificationTemplatesTableArn:
+    Value: !GetAtt NotificationTemplatesTable.Arn
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-NotificationTemplatesTableArn
+  ReportsTableName:
+    Value: !Ref ReportsTable
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-ReportsTableName
+  ReportsTableArn:
+    Value: !GetAtt ReportsTable.Arn
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-ReportsTableArn

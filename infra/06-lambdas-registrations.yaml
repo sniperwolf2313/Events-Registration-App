@@ -1,0 +1,185 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Registration Lambdas with DynamoDB conditional/transaction
+  permissions and notification queue access.
+Parameters:
+  ProjectName:
+    Type: String
+    Default: event-manager
+    AllowedPattern: ^[a-z][a-z0-9-]{2,30}$
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - qa
+      - prod
+  SenderEmail:
+    Type: String
+    Default: no-reply@example.com
+    Description: SES sender email. In sandbox, sender and recipients must be verified.
+  LambdaLogRetentionDays:
+    Type: Number
+    Default: 14
+Resources:
+  RegisterAttendeeLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ProjectName}-${Environment}-RegisterAttendee
+      RetentionInDays: !Ref LambdaLogRetentionDays
+  CancelRegisterLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${ProjectName}-${Environment}-CancelRegister
+      RetentionInDays: !Ref LambdaLogRetentionDays
+  RegisterAttendeeRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-${Environment}-RegisterAttendee-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: RegisterAttendee-least-privilege-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-${Environment}-RegisterAttendee:*
+              - Effect: Allow
+                Action:
+                  - dynamodb:TransactWriteItems
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                  - dynamodb:PutItem
+                Resource:
+                  - !ImportValue
+                    Fn::Sub: ${ProjectName}-${Environment}-EventsTableArn
+                  - !ImportValue
+                    Fn::Sub: ${ProjectName}-${Environment}-RegistrationsTableArn
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                Resource: !ImportValue
+                  Fn::Sub: ${ProjectName}-${Environment}-NotificationsQueueArn
+  CancelRegisterRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub ${ProjectName}-${Environment}-CancelRegister-role
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      Policies:
+        - PolicyName: CancelRegister-least-privilege-policy
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - logs:CreateLogStream
+                  - logs:PutLogEvents
+                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-${Environment}-CancelRegister:*
+              - Effect: Allow
+                Action:
+                  - dynamodb:TransactWriteItems
+                  - dynamodb:GetItem
+                  - dynamodb:UpdateItem
+                Resource:
+                  - !ImportValue
+                    Fn::Sub: ${ProjectName}-${Environment}-EventsTableArn
+                  - !ImportValue
+                    Fn::Sub: ${ProjectName}-${Environment}-RegistrationsTableArn
+              - Effect: Allow
+                Action:
+                  - sqs:SendMessage
+                Resource: !ImportValue
+                  Fn::Sub: ${ProjectName}-${Environment}-NotificationsQueueArn
+  RegisterAttendeeFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: RegisterAttendeeLogGroup
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Environment}-RegisterAttendee
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt RegisterAttendeeRole.Arn
+      Timeout: 30
+      MemorySize: 128
+      Architectures:
+        - arm64
+      Environment:
+        Variables:
+          EVENTS_TABLE: !ImportValue
+            Fn::Sub: ${ProjectName}-${Environment}-EventsTableName
+          REGISTRATIONS_TABLE: !ImportValue
+            Fn::Sub: ${ProjectName}-${Environment}-RegistrationsTableName
+          NOTIFICATIONS_QUEUE_URL: !ImportValue
+            Fn::Sub: ${ProjectName}-${Environment}-NotificationsQueueUrl
+          SES_SENDER_EMAIL: !Ref SenderEmail
+          FUNCTION_NAME: RegisterAttendee
+      Code:
+        S3Bucket:
+          Fn::ImportValue: !Sub "${ProjectName}-${Environment}-FrontendArtifactsBucketName"
+        S3Key: Lambda-Artifacts/dummy-lambda/dummy-lambda.zip
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+  CancelRegisterFunction:
+    Type: AWS::Lambda::Function
+    DependsOn: CancelRegisterLogGroup
+    Properties:
+      FunctionName: !Sub ${ProjectName}-${Environment}-CancelRegister
+      Runtime: python3.12
+      Handler: index.handler
+      Role: !GetAtt CancelRegisterRole.Arn
+      Timeout: 30
+      MemorySize: 128
+      Architectures:
+        - arm64
+      Environment:
+        Variables:
+          EVENTS_TABLE: !ImportValue
+            Fn::Sub: ${ProjectName}-${Environment}-EventsTableName
+          REGISTRATIONS_TABLE: !ImportValue
+            Fn::Sub: ${ProjectName}-${Environment}-RegistrationsTableName
+          NOTIFICATIONS_QUEUE_URL: !ImportValue
+            Fn::Sub: ${ProjectName}-${Environment}-NotificationsQueueUrl
+          SES_SENDER_EMAIL: !Ref SenderEmail
+          FUNCTION_NAME: CancelRegister
+      Code:
+        S3Bucket:
+          Fn::ImportValue: !Sub "${ProjectName}-${Environment}-FrontendArtifactsBucketName"
+        S3Key: Lambda-Artifacts/dummy-lambda/dummy-lambda.zip
+      Tags:
+        - Key: Project
+          Value: !Ref ProjectName
+        - Key: Environment
+          Value: !Ref Environment
+Outputs:
+  RegisterAttendeeFunctionName:
+    Value: !Ref RegisterAttendeeFunction
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-RegisterAttendeeFunctionName
+  RegisterAttendeeFunctionArn:
+    Value: !GetAtt RegisterAttendeeFunction.Arn
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-RegisterAttendeeFunctionArn
+  CancelRegisterFunctionName:
+    Value: !Ref CancelRegisterFunction
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-CancelRegisterFunctionName
+  CancelRegisterFunctionArn:
+    Value: !GetAtt CancelRegisterFunction.Arn
+    Export:
+      Name: !Sub ${ProjectName}-${Environment}-CancelRegisterFunctionArn

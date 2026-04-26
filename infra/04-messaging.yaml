@@ -1,0 +1,89 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: SQS queues and DLQs for asynchronous report generation and notifications.
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: event-manager
+    AllowedPattern: '^[a-z][a-z0-9-]{2,30}$'
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, qa, prod]
+
+Resources:
+  ReportDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${ProjectName}-${Environment}-report-dlq.fifo'
+      FifoQueue: true
+      ContentBasedDeduplication: true
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+
+  ReportQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${ProjectName}-${Environment}-report.fifo'
+      FifoQueue: true
+      ContentBasedDeduplication: true
+      VisibilityTimeout: 300
+      MessageRetentionPeriod: 345600
+      ReceiveMessageWaitTimeSeconds: 10
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt ReportDLQ.Arn
+        maxReceiveCount: 3
+
+  NotificationsDLQ:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${ProjectName}-${Environment}-notifications-dlq'
+      MessageRetentionPeriod: 1209600
+      SqsManagedSseEnabled: true
+
+  NotificationsQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub '${ProjectName}-${Environment}-notifications'
+      VisibilityTimeout: 120
+      MessageRetentionPeriod: 345600
+      ReceiveMessageWaitTimeSeconds: 10
+      SqsManagedSseEnabled: true
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt NotificationsDLQ.Arn
+        maxReceiveCount: 5
+
+Outputs:
+  ReportQueueUrl:
+    Value: !Ref ReportQueue
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-ReportQueueUrl'
+  ReportQueueArn:
+    Value: !GetAtt ReportQueue.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-ReportQueueArn'
+  ReportDLQUrl:
+    Value: !Ref ReportDLQ
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-ReportDLQUrl'
+  ReportDLQArn:
+    Value: !GetAtt ReportDLQ.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-ReportDLQArn'
+  NotificationsQueueUrl:
+    Value: !Ref NotificationsQueue
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-NotificationsQueueUrl'
+  NotificationsQueueArn:
+    Value: !GetAtt NotificationsQueue.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-NotificationsQueueArn'
+  NotificationsDLQUrl:
+    Value: !Ref NotificationsDLQ
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-NotificationsDLQUrl'
+  NotificationsDLQArn:
+    Value: !GetAtt NotificationsDLQ.Arn
+    Export:
+      Name: !Sub '${ProjectName}-${Environment}-NotificationsDLQArn'
