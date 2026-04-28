@@ -119,7 +119,7 @@ jobs:
           parameter-overrides: >-
             ProjectName=${{ env.PROJECT_NAME }},
             Environment=${{ env.ENVIRONMENT }}
-          fail-on-empty-changeset: "false"
+          no-fail-on-empty-changeset: "1"
 
   dummy-lambda-artifact:
     name: Create dummy Lambda artifact
@@ -237,7 +237,7 @@ jobs:
             ProjectName=${{ env.PROJECT_NAME }},
             Environment=${{ env.ENVIRONMENT }},
             EnablePointInTimeRecovery=false
-          fail-on-empty-changeset: "false"
+          no-fail-on-empty-changeset: "1""
 
   auth:
     name: Deploy 03-auth
@@ -283,7 +283,7 @@ jobs:
             Environment=${{ env.ENVIRONMENT }},
             CallbackUrl=${{ env.CALLBACK_URL }},
             LogoutUrl=${{ env.LOGOUT_URL }}
-          fail-on-empty-changeset: "false"
+          no-fail-on-empty-changeset: "1"
 
   messaging:
     name: Deploy 04-messaging
@@ -325,7 +325,7 @@ jobs:
           parameter-overrides: >-
             ProjectName=${{ env.PROJECT_NAME }},
             Environment=${{ env.ENVIRONMENT }}
-          fail-on-empty-changeset: "false"
+          no-fail-on-empty-changeset: "1"
 
   lambdas-events:
     name: Deploy 05-lambdas-events
@@ -374,7 +374,7 @@ jobs:
             ProjectName=${{ env.PROJECT_NAME }},
             Environment=${{ env.ENVIRONMENT }},
             SenderEmail=${{ env.SENDER_EMAIL }}
-          fail-on-empty-changeset: "false"
+          no-fail-on-empty-changeset: "1"
 
   lambdas-registrations:
     name: Deploy 06-lambdas-registrations
@@ -423,7 +423,7 @@ jobs:
             ProjectName=${{ env.PROJECT_NAME }},
             Environment=${{ env.ENVIRONMENT }},
             SenderEmail=${{ env.SENDER_EMAIL }}
-          fail-on-empty-changeset: "false"
+          no-fail-on-empty-changeset: "1"
 
   lambdas-reports:
     name: Deploy 07-lambdas-reports
@@ -472,7 +472,7 @@ jobs:
             ProjectName=${{ env.PROJECT_NAME }},
             Environment=${{ env.ENVIRONMENT }},
             SenderEmail=${{ env.SENDER_EMAIL }}
-          fail-on-empty-changeset: "false"
+          no-fail-on-empty-changeset: "1"
 
   lambdas-notifications:
     name: Deploy 08-lambdas-notifications
@@ -521,7 +521,7 @@ jobs:
             ProjectName=${{ env.PROJECT_NAME }},
             Environment=${{ env.ENVIRONMENT }},
             SenderEmail=${{ env.SENDER_EMAIL }}
-          fail-on-empty-changeset: "false"
+          no-fail-on-empty-changeset: "1"
 
   api:
     name: Deploy 09-api
@@ -572,4 +572,4 @@ jobs:
           parameter-overrides: >-
             ProjectName=${{ env.PROJECT_NAME }},
             Environment=${{ env.ENVIRONMENT }}
-          fail-on-empty-changeset: "false"
+          no-fail-on-empty-changeset: "1"
