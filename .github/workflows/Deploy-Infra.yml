@@ -112,14 +112,13 @@ jobs:
             --region "$AWS_REGION"
 
       - name: Deploy storage stack
-        uses: aws-actions/aws-cloudformation-github-deploy@v2.0.0
-        with:
-          name: ${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-storage
-          template: infra/01-storage.yaml
-          parameter-overrides: >-
-            ProjectName=${{ env.PROJECT_NAME }},
-            Environment=${{ env.ENVIRONMENT }}
-          fail-on-empty-changeset: false
+        shell: bash
+        run: |
+          aws cloudformation deploy \
+            --template-file "${ROOT_DIR}/infra/01-storage.yaml" \
+            --stack-name "${PROJECT_NAME}-${ENVIRONMENT}-storage" \
+            --parameter-overrides ProjectName="${PROJECT_NAME}" Environment="${ENVIRONMENT}" \
+            --region "${AWS_REGION}"
 
   dummy-lambda-artifact:
     name: Create dummy Lambda artifact
@@ -138,6 +137,7 @@ jobs:
       PROJECT_NAME: ${{ vars.PROJECT_NAME }}
       ENVIRONMENT: ${{ inputs.environment }}
       AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
+      LAMBDA_ARTIFACTS_BUCKET: ${{ vars.LAMBDA_ARTIFACTS_BUCKET }}
 
     steps:
       - name: Checkout repository
@@ -154,40 +154,21 @@ jobs:
         run: |
           set -euo pipefail
 
-          echo "Getting frontend artifacts bucket from storage stack..."
-
-          LAMBDA_ARTIFACTS_BUCKET=$(aws cloudformation describe-stacks \
-            --stack-name "${PROJECT_NAME}-${ENVIRONMENT}-storage" \
-            --region "${AWS_REGION}" \
-            --query "Stacks[0].Outputs[?OutputKey=='FrontendArtifactsBucketName'].OutputValue | [0]" \
-            --output text)
-
-          if [ -z "$LAMBDA_ARTIFACTS_BUCKET" ] || [ "$LAMBDA_ARTIFACTS_BUCKET" = "None" ]; then
-            echo "Could not find FrontendArtifactsBucketName output."
-            exit 1
-          fi
-
           echo "Using bucket: ${LAMBDA_ARTIFACTS_BUCKET}"
 
           mkdir -p .build/dummy-lambda
 
-          cat > .build/dummy-lambda/app.py <<'PY'
+          cat > .build/dummy-lambda/index.py <<'PY'
           import json
 
           def handler(event, context):
               return {
-                  "statusCode": 501,
-                  "headers": {
-                      "Content-Type": "application/json"
-                  },
-                  "body": json.dumps({
-                      "message": "Dummy lambda deployed."
-                  })
+                  "message": "Hola, esto es un mensaje de prueba "
               }
           PY
 
           cd .build/dummy-lambda
-          zip -r ../dummy-lambda.zip app.py
+          zip -r ../dummy-lambda.zip index.py
           cd -
 
           aws s3 cp .build/dummy-lambda.zip \
@@ -229,15 +210,13 @@ jobs:
             --region "$AWS_REGION"
 
       - name: Deploy data stack
-        uses: aws-actions/aws-cloudformation-github-deploy@v2.0.0
-        with:
-          name: ${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-data
-          template: infra/02-data.yaml
-          parameter-overrides: >-
-            ProjectName=${{ env.PROJECT_NAME }},
-            Environment=${{ env.ENVIRONMENT }},
-            EnablePointInTimeRecovery=false
-          fail-on-empty-changeset: false"
+        shell: bash
+        run: |
+          aws cloudformation deploy \
+            --template-file "${ROOT_DIR}/infra/02-data.yaml" \
+            --stack-name "${PROJECT_NAME}-${ENVIRONMENT}-data" \
+            --parameter-overrides ProjectName="${PROJECT_NAME}" Environment="${ENVIRONMENT}" EnablePointInTimeRecovery=false \
+            --region "${AWS_REGION}"
 
   auth:
     name: Deploy 03-auth
@@ -274,16 +253,13 @@ jobs:
             --region "$AWS_REGION"
 
       - name: Deploy auth stack
-        uses: aws-actions/aws-cloudformation-github-deploy@v2.0.0
-        with:
-          name: ${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-auth
-          template: infra/03-auth.yaml
-          parameter-overrides: >-
-            ProjectName=${{ env.PROJECT_NAME }},
-            Environment=${{ env.ENVIRONMENT }},
-            CallbackUrl=${{ env.CALLBACK_URL }},
-            LogoutUrl=${{ env.LOGOUT_URL }}
-          fail-on-empty-changeset: false
+        shell: bash
+        run: |
+          aws cloudformation deploy \
+            --template-file "${ROOT_DIR}/infra/03-auth.yaml" \
+            --stack-name "${PROJECT_NAME}-${ENVIRONMENT}-auth" \
+            --parameter-overrides ProjectName="${PROJECT_NAME}" Environment="${ENVIRONMENT}" CallbackUrl="${CALLBACK_URL}" LogoutUrl="${LOGOUT_URL}" \
+            --region "${AWS_REGION}"
 
   messaging:
     name: Deploy 04-messaging
@@ -318,14 +294,13 @@ jobs:
             --region "$AWS_REGION"
 
       - name: Deploy messaging stack
-        uses: aws-actions/aws-cloudformation-github-deploy@v2.0.0
-        with:
-          name: ${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-messaging
-          template: infra/04-messaging.yaml
-          parameter-overrides: >-
-            ProjectName=${{ env.PROJECT_NAME }},
-            Environment=${{ env.ENVIRONMENT }}
-          fail-on-empty-changeset: false
+        shell: bash
+        run: |
+          aws cloudformation deploy \
+            --template-file "${ROOT_DIR}/infra/04-messaging.yaml" \
+            --stack-name "${PROJECT_NAME}-${ENVIRONMENT}-messaging" \
+            --parameter-overrides ProjectName="${PROJECT_NAME}" Environment="${ENVIRONMENT}" \
+            --region "${AWS_REGION}"
 
   lambdas-events:
     name: Deploy 05-lambdas-events
@@ -365,16 +340,14 @@ jobs:
             --region "$AWS_REGION"
 
       - name: Deploy lambdas events stack
-        uses: aws-actions/aws-cloudformation-github-deploy@v2.0.0
-        with:
-          name: ${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-lambdas-events
-          template: infra/05-lambdas-events.yaml
-          capabilities: CAPABILITY_NAMED_IAM
-          parameter-overrides: >-
-            ProjectName=${{ env.PROJECT_NAME }},
-            Environment=${{ env.ENVIRONMENT }},
-            SenderEmail=${{ env.SENDER_EMAIL }}
-          fail-on-empty-changeset: false
+        shell: bash
+        run: |
+          aws cloudformation deploy \
+            --template-file "${ROOT_DIR}/infra/05-lambdas-events.yaml" \
+            --stack-name "${PROJECT_NAME}-${ENVIRONMENT}-lambdas-events" \
+            --parameter-overrides ProjectName="${PROJECT_NAME}" Environment="${ENVIRONMENT}" SenderEmail="${SENDER_EMAIL}" \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --region "${AWS_REGION}"
 
   lambdas-registrations:
     name: Deploy 06-lambdas-registrations
@@ -414,16 +387,14 @@ jobs:
             --region "$AWS_REGION"
 
       - name: Deploy lambdas registrations stack
-        uses: aws-actions/aws-cloudformation-github-deploy@v2.0.0
-        with:
-          name: ${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-lambdas-registration
-          template: infra/06-lambdas-registrations.yaml
-          capabilities: CAPABILITY_NAMED_IAM
-          parameter-overrides: >-
-            ProjectName=${{ env.PROJECT_NAME }},
-            Environment=${{ env.ENVIRONMENT }},
-            SenderEmail=${{ env.SENDER_EMAIL }}
-          fail-on-empty-changeset: false
+        shell: bash
+        run: |
+          aws cloudformation deploy \
+            --template-file "${ROOT_DIR}/infra/06-lambdas-registrations.yaml" \
+            --stack-name "${PROJECT_NAME}-${ENVIRONMENT}-lambdas-registration" \
+            --parameter-overrides ProjectName="${PROJECT_NAME}" Environment="${ENVIRONMENT}" SenderEmail="${SENDER_EMAIL}" \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --region "${AWS_REGION}"
 
   lambdas-reports:
     name: Deploy 07-lambdas-reports
@@ -463,16 +434,14 @@ jobs:
             --region "$AWS_REGION"
 
       - name: Deploy lambdas reports stack
-        uses: aws-actions/aws-cloudformation-github-deploy@v2.0.0
-        with:
-          name: ${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-lambdas-report
-          template: infra/07-lambdas-reports.yaml
-          capabilities: CAPABILITY_NAMED_IAM
-          parameter-overrides: >-
-            ProjectName=${{ env.PROJECT_NAME }},
-            Environment=${{ env.ENVIRONMENT }},
-            SenderEmail=${{ env.SENDER_EMAIL }}
-          fail-on-empty-changeset: false
+        shell: bash
+        run: |
+          aws cloudformation deploy \
+            --template-file "${ROOT_DIR}/infra/07-lambdas-reports.yaml" \
+            --stack-name "${PROJECT_NAME}-${ENVIRONMENT}-lambdas-report" \
+            --parameter-overrides ProjectName="${PROJECT_NAME}" Environment="${ENVIRONMENT}" SenderEmail="${SENDER_EMAIL}" \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --region "${AWS_REGION}"
 
   lambdas-notifications:
     name: Deploy 08-lambdas-notifications
@@ -512,16 +481,14 @@ jobs:
             --region "$AWS_REGION"
 
       - name: Deploy lambdas notifications stack
-        uses: aws-actions/aws-cloudformation-github-deploy@v2.0.0
-        with:
-          name: ${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-lambdas-notifications
-          template: infra/08-lambdas-notifications.yaml
-          capabilities: CAPABILITY_NAMED_IAM
-          parameter-overrides: >-
-            ProjectName=${{ env.PROJECT_NAME }},
-            Environment=${{ env.ENVIRONMENT }},
-            SenderEmail=${{ env.SENDER_EMAIL }}
-          fail-on-empty-changeset: false
+        shell: bash
+        run: |
+          aws cloudformation deploy \
+            --template-file "${ROOT_DIR}/infra/08-lambdas-notifications.yaml" \
+            --stack-name "${PROJECT_NAME}-${ENVIRONMENT}-lambdas-notifications" \
+            --parameter-overrides ProjectName="${PROJECT_NAME}" Environment="${ENVIRONMENT}" SenderEmail="${SENDER_EMAIL}" \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --region "${AWS_REGION}"
 
   api:
     name: Deploy 09-api
@@ -564,12 +531,11 @@ jobs:
             --region "$AWS_REGION"
 
       - name: Deploy API stack
-        uses: aws-actions/aws-cloudformation-github-deploy@v2.0.0
-        with:
-          name: ${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-compute-api
-          template: infra/09-api.yaml
-          capabilities: CAPABILITY_NAMED_IAM
-          parameter-overrides: >-
-            ProjectName=${{ env.PROJECT_NAME }},
-            Environment=${{ env.ENVIRONMENT }}
-          fail-on-empty-changeset: false
+        shell: bash
+        run: |
+          aws cloudformation deploy \
+            --template-file "${ROOT_DIR}/infra/09-api.yaml" \
+            --stack-name "${PROJECT_NAME}-${ENVIRONMENT}-compute-api" \
+            --parameter-overrides ProjectName="${PROJECT_NAME}" Environment="${ENVIRONMENT}" \
+            --capabilities CAPABILITY_NAMED_IAM \
+            --region "${AWS_REGION}"
