@@ -115,7 +115,7 @@ jobs:
         shell: bash
         run: |
           aws cloudformation deploy \
-            --template-file file://infra/01-storage.yaml \
+            --template-file infra/01-storage.yaml \
             --stack-name "${PROJECT_NAME}-${ENVIRONMENT}-storage" \
             --parameter-overrides ProjectName="${PROJECT_NAME}" Environment="${ENVIRONMENT}" \
             --region "${AWS_REGION}"
@@ -213,7 +213,7 @@ jobs:
         shell: bash
         run: |
           aws cloudformation deploy \
-            --template-file  file://infra/02-data.yaml \
+            --template-file  infra/02-data.yaml \
             --stack-name "${PROJECT_NAME}-${ENVIRONMENT}-data" \
             --parameter-overrides ProjectName="${PROJECT_NAME}" Environment="${ENVIRONMENT}" EnablePointInTimeRecovery=false \
             --region "${AWS_REGION}"
@@ -256,7 +256,7 @@ jobs:
         shell: bash
         run: |
           aws cloudformation deploy \
-            --template-file file://infra/03-auth.yaml \
+            --template-file infra/03-auth.yaml \
             --stack-name "${PROJECT_NAME}-${ENVIRONMENT}-auth" \
             --parameter-overrides ProjectName="${PROJECT_NAME}" Environment="${ENVIRONMENT}" CallbackUrl="${CALLBACK_URL}" LogoutUrl="${LOGOUT_URL}" \
             --region "${AWS_REGION}"
@@ -297,7 +297,7 @@ jobs:
         shell: bash
         run: |
           aws cloudformation deploy \
-            --template-file file://infra/04-messaging.yaml \
+            --template-file infra/04-messaging.yaml \
             --stack-name "${PROJECT_NAME}-${ENVIRONMENT}-messaging" \
             --parameter-overrides ProjectName="${PROJECT_NAME}" Environment="${ENVIRONMENT}" \
             --region "${AWS_REGION}"
@@ -343,7 +343,7 @@ jobs:
         shell: bash
         run: |
           aws cloudformation deploy \
-            --template-file file://infra/05-lambdas-events.yaml \
+            --template-file infra/05-lambdas-events.yaml \
             --stack-name "${PROJECT_NAME}-${ENVIRONMENT}-lambdas-events" \
             --parameter-overrides ProjectName="${PROJECT_NAME}" Environment="${ENVIRONMENT}" SenderEmail="${SENDER_EMAIL}" \
             --capabilities CAPABILITY_NAMED_IAM \
@@ -390,7 +390,7 @@ jobs:
         shell: bash
         run: |
           aws cloudformation deploy \
-            --template-file file://infra/06-lambdas-registrations.yaml \
+            --template-file infra/06-lambdas-registrations.yaml \
             --stack-name "${PROJECT_NAME}-${ENVIRONMENT}-lambdas-registration" \
             --parameter-overrides ProjectName="${PROJECT_NAME}" Environment="${ENVIRONMENT}" SenderEmail="${SENDER_EMAIL}" \
             --capabilities CAPABILITY_NAMED_IAM \
@@ -437,7 +437,7 @@ jobs:
         shell: bash
         run: |
           aws cloudformation deploy \
-            --template-file file://infra/07-lambdas-reports.yaml \
+            --template-file infra/07-lambdas-reports.yaml \
             --stack-name "${PROJECT_NAME}-${ENVIRONMENT}-lambdas-report" \
             --parameter-overrides ProjectName="${PROJECT_NAME}" Environment="${ENVIRONMENT}" SenderEmail="${SENDER_EMAIL}" \
             --capabilities CAPABILITY_NAMED_IAM \
@@ -484,7 +484,7 @@ jobs:
         shell: bash
         run: |
           aws cloudformation deploy \
-            --template-file file://infra/08-lambdas-notifications.yaml \
+            --template-file infra/08-lambdas-notifications.yaml \
             --stack-name "${PROJECT_NAME}-${ENVIRONMENT}-lambdas-notifications" \
             --parameter-overrides ProjectName="${PROJECT_NAME}" Environment="${ENVIRONMENT}" SenderEmail="${SENDER_EMAIL}" \
             --capabilities CAPABILITY_NAMED_IAM \
@@ -534,7 +534,7 @@ jobs:
         shell: bash
         run: |
           aws cloudformation deploy \
-            --template-file file://infra/09-api.yaml \
+            --template-file infra/09-api.yaml \
             --stack-name "${PROJECT_NAME}-${ENVIRONMENT}-compute-api" \
             --parameter-overrides ProjectName="${PROJECT_NAME}" Environment="${ENVIRONMENT}" \
             --capabilities CAPABILITY_NAMED_IAM \
