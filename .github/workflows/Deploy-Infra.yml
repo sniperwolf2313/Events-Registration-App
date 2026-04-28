@@ -112,14 +112,14 @@ jobs:
             --region "$AWS_REGION"
 
       - name: Deploy storage stack
-        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        uses: aws-actions/aws-cloudformation-github-deploy@v2.0.0
         with:
           name: ${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-storage
           template: infra/01-storage.yaml
           parameter-overrides: >-
             ProjectName=${{ env.PROJECT_NAME }},
             Environment=${{ env.ENVIRONMENT }}
-          no-fail-on-empty-changeset: "1"
+          fail-on-empty-changeset: false
 
   dummy-lambda-artifact:
     name: Create dummy Lambda artifact
@@ -229,7 +229,7 @@ jobs:
             --region "$AWS_REGION"
 
       - name: Deploy data stack
-        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        uses: aws-actions/aws-cloudformation-github-deploy@v2.0.0
         with:
           name: ${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-data
           template: infra/02-data.yaml
@@ -237,7 +237,7 @@ jobs:
             ProjectName=${{ env.PROJECT_NAME }},
             Environment=${{ env.ENVIRONMENT }},
             EnablePointInTimeRecovery=false
-          no-fail-on-empty-changeset: "1""
+          fail-on-empty-changeset: false"
 
   auth:
     name: Deploy 03-auth
@@ -274,7 +274,7 @@ jobs:
             --region "$AWS_REGION"
 
       - name: Deploy auth stack
-        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        uses: aws-actions/aws-cloudformation-github-deploy@v2.0.0
         with:
           name: ${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-auth
           template: infra/03-auth.yaml
@@ -283,7 +283,7 @@ jobs:
             Environment=${{ env.ENVIRONMENT }},
             CallbackUrl=${{ env.CALLBACK_URL }},
             LogoutUrl=${{ env.LOGOUT_URL }}
-          no-fail-on-empty-changeset: "1"
+          fail-on-empty-changeset: false
 
   messaging:
     name: Deploy 04-messaging
@@ -318,14 +318,14 @@ jobs:
             --region "$AWS_REGION"
 
       - name: Deploy messaging stack
-        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        uses: aws-actions/aws-cloudformation-github-deploy@v2.0.0
         with:
           name: ${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-messaging
           template: infra/04-messaging.yaml
           parameter-overrides: >-
             ProjectName=${{ env.PROJECT_NAME }},
             Environment=${{ env.ENVIRONMENT }}
-          no-fail-on-empty-changeset: "1"
+          fail-on-empty-changeset: false
 
   lambdas-events:
     name: Deploy 05-lambdas-events
@@ -365,7 +365,7 @@ jobs:
             --region "$AWS_REGION"
 
       - name: Deploy lambdas events stack
-        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        uses: aws-actions/aws-cloudformation-github-deploy@v2.0.0
         with:
           name: ${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-lambdas-events
           template: infra/05-lambdas-events.yaml
@@ -374,7 +374,7 @@ jobs:
             ProjectName=${{ env.PROJECT_NAME }},
             Environment=${{ env.ENVIRONMENT }},
             SenderEmail=${{ env.SENDER_EMAIL }}
-          no-fail-on-empty-changeset: "1"
+          fail-on-empty-changeset: false
 
   lambdas-registrations:
     name: Deploy 06-lambdas-registrations
@@ -414,7 +414,7 @@ jobs:
             --region "$AWS_REGION"
 
       - name: Deploy lambdas registrations stack
-        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        uses: aws-actions/aws-cloudformation-github-deploy@v2.0.0
         with:
           name: ${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-lambdas-registration
           template: infra/06-lambdas-registrations.yaml
@@ -423,7 +423,7 @@ jobs:
             ProjectName=${{ env.PROJECT_NAME }},
             Environment=${{ env.ENVIRONMENT }},
             SenderEmail=${{ env.SENDER_EMAIL }}
-          no-fail-on-empty-changeset: "1"
+          fail-on-empty-changeset: false
 
   lambdas-reports:
     name: Deploy 07-lambdas-reports
@@ -463,7 +463,7 @@ jobs:
             --region "$AWS_REGION"
 
       - name: Deploy lambdas reports stack
-        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        uses: aws-actions/aws-cloudformation-github-deploy@v2.0.0
         with:
           name: ${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-lambdas-report
           template: infra/07-lambdas-reports.yaml
@@ -472,7 +472,7 @@ jobs:
             ProjectName=${{ env.PROJECT_NAME }},
             Environment=${{ env.ENVIRONMENT }},
             SenderEmail=${{ env.SENDER_EMAIL }}
-          no-fail-on-empty-changeset: "1"
+          fail-on-empty-changeset: false
 
   lambdas-notifications:
     name: Deploy 08-lambdas-notifications
@@ -512,7 +512,7 @@ jobs:
             --region "$AWS_REGION"
 
       - name: Deploy lambdas notifications stack
-        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        uses: aws-actions/aws-cloudformation-github-deploy@v2.0.0
         with:
           name: ${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-lambdas-notifications
           template: infra/08-lambdas-notifications.yaml
@@ -521,7 +521,7 @@ jobs:
             ProjectName=${{ env.PROJECT_NAME }},
             Environment=${{ env.ENVIRONMENT }},
             SenderEmail=${{ env.SENDER_EMAIL }}
-          no-fail-on-empty-changeset: "1"
+          fail-on-empty-changeset: false
 
   api:
     name: Deploy 09-api
@@ -564,7 +564,7 @@ jobs:
             --region "$AWS_REGION"
 
       - name: Deploy API stack
-        uses: aws-actions/aws-cloudformation-github-deploy@v1
+        uses: aws-actions/aws-cloudformation-github-deploy@v2.0.0
         with:
           name: ${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-compute-api
           template: infra/09-api.yaml
@@ -572,4 +572,4 @@ jobs:
           parameter-overrides: >-
             ProjectName=${{ env.PROJECT_NAME }},
             Environment=${{ env.ENVIRONMENT }}
-          no-fail-on-empty-changeset: "1"
+          fail-on-empty-changeset: false
