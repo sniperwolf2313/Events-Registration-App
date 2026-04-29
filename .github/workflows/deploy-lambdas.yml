@@ -201,7 +201,7 @@ jobs:
           runtime: python3.12
           architectures: arm64
           s3-bucket: ${{ env.LAMBDA_ARTIFACTS_BUCKET }}
-          s3-key: Lambda-Artifacts/functions/${{ matrix.lambda.folder }}/latest.zip
+          s3-key: Lambda-Artifacts/${{ matrix.lambda.folder }}/latest.zip
           publish: false
           dry-run: ${{ env.DRY_RUN }}
 
