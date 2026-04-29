@@ -197,7 +197,7 @@ jobs:
         with:
           function-name: ${{ env.PROJECT_NAME }}-${{ env.ENVIRONMENT }}-${{ matrix.lambda.suffix }}
           code-artifacts-dir: .build/${{ matrix.lambda.folder }}
-          handler: app.handler
+          handler: index.handler
           runtime: python3.12
           architectures: arm64
           s3-bucket: ${{ env.LAMBDA_ARTIFACTS_BUCKET }}
