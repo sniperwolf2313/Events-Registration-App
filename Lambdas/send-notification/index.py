@@ -1,92 +1,92 @@
-#Importaciones necesarias para manejar la generación de reportes, interacción con DynamoDB, S3 y SQS
+#importaciones necesarias para manejar la generación de reportes, interacción con DynamoDB, S3 y Lambda
 import json
 import os
-from datetime import datetime, timezone
+#importaciones necesarias para manejar la generación de reportes, interacción con DynamoDB, S3 y Lambda
 import boto3
-from botocore.exceptions import ClientError
 #Clientes de AWS
-s3 = boto3.client("s3")
-sqs = boto3.client("sqs")
 dynamodb = boto3.client("dynamodb")
+ses = boto3.client("ses")
 #Variables de entorno
-REPORTS_TABLE = os.environ["REPORTS_TABLE"]
-REPORTS_BUCKET = os.environ["REPORTS_BUCKET"]
-NOTIFICATIONS_QUEUE_URL = os.environ["NOTIFICATIONS_QUEUE_URL"]
+TEMPLATES_TABLE = os.environ["NOTIFICATION_TEMPLATES_TABLE"]
+SES_SENDER_EMAIL = os.environ["SES_SENDER_EMAIL"]
 
-#Función para formatear las respuestas de la Lambda
-def response(status_code, body):
-    return {
-        "statusCode": status_code,
-        "headers": {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*"
-        },
-        "body": json.dumps(body, ensure_ascii=False)
-    }
-
-#Función principal de la Lambda para enviar notificaciones cuando un reporte está listo
+#Función principal que maneja el evento de SQS, procesa el mensaje y envía la notificación por email utilizando SES
 def handler(event, context):
     try:
-        report_id = event.get("reportId")
-        s3_bucket = event.get("s3Bucket", REPORTS_BUCKET)
-        s3_key = event.get("s3Key")
-        requested_by = event.get("requestedBy", "admin")
-        #Validación de campos obligatorios
-        if not report_id or not s3_key:
-            return response(400, {
-                "message": "Los campos reportId y s3Key son obligatorios"
-            })
-        #Verifica que el archivo exista en S3 antes de enviar la notificación
-        s3.head_object(
-            Bucket=s3_bucket,
-            Key=s3_key
-        )
-        #Si el archivo existe, envía la notificación a SQS
-        now = datetime.now(timezone.utc).isoformat()
-        #Construye el mensaje de notificación
-        notification_message = {
-            "type": "REPORT_READY",
-            "reportId": report_id,
-            "requestedBy": requested_by,
-            "s3Bucket": s3_bucket,
-            "s3Key": s3_key,
-            "message": "El reporte fue generado correctamente y está disponible.",
-            "createdAt": now
+        #Procesa cada mensaje recibido en el evento de SQS
+        for record in event["Records"]:
+            message = json.loads(record["body"])
+            #Extrae información del mensaje para determinar el tipo de notificación, destinatario y contenido
+            notification_type = message.get("type")
+            recipient_email = message.get("recipientEmail")
+            #Valida que se hayan proporcionado los campos necesarios para enviar la notificación
+            if not notification_type or not recipient_email:
+                raise ValueError("Los campos type y recipientEmail son obligatorios.")
+            #Obtiene la plantilla de notificación desde DynamoDB según el tipo de notificación
+            template = get_template(notification_type)
+            #Reemplaza los placeholders en la plantilla con los valores específicos del mensaje
+            subject = template["asunto"]
+            body = template["contenido"]
+            #Reemplaza placeholders en el contenido de la plantilla con los valores del mensaje
+            body = body.replace("{nombre}", message.get("nombre", ""))
+            body = body.replace("{titulo}", message.get("titulo", ""))
+            body = body.replace("{reportId}", message.get("reportId", ""))
+            body = body.replace("{s3Key}", message.get("s3Key", ""))
+            #Envía el email utilizando SES con el asunto y cuerpo generados a partir de la plantilla
+            ses.send_email(
+                Source=SES_SENDER_EMAIL,
+                Destination={
+                    "ToAddresses": [recipient_email]
+                },
+                Message={
+                    "Subject": {
+                        "Data": subject,
+                        "Charset": "UTF-8"
+                    },
+                    "Body": {
+                        "Text": {
+                            "Data": body,
+                            "Charset": "UTF-8"
+                        }
+                    }
+                }
+            )
+        #Retorna una respuesta exitosa después de procesar todos los mensajes
+        return {
+            "statusCode": 200,
+            "body": json.dumps({
+                "message": "Notificación enviada correctamente"
+            }, ensure_ascii=False)
         }
-        #Envía el mensaje a la cola de SQS
-        sqs.send_message(
-            QueueUrl=NOTIFICATIONS_QUEUE_URL,
-            MessageBody=json.dumps(notification_message, ensure_ascii=False)
-        )
-        #Actualiza el estado del reporte en DynamoDB a "notification_sent"
-        dynamodb.update_item(
-            TableName=REPORTS_TABLE,
-            Key={
-                "reportId": {"S": report_id}
-            },
-            UpdateExpression="SET #status = :status, notificationSentAt = :sentAt",
-            ExpressionAttributeNames={
-                "#status": "status"
-            },
-            ExpressionAttributeValues={
-                ":status": {"S": "notification_sent"},
-                ":sentAt": {"S": now}
-            }
-        )
-        #Retorna una respuesta exitosa con el mensaje de notificación
-        return response(200, {
-            "message": "Notificación enviada a la cola correctamente",
-            "data": notification_message
-        })
-    #Manejo de errores específicos de AWS y errores generales
-    except ClientError as e:
-        return response(500, {
-            "message": "Error al enviar la notificación del reporte",
-            "error": str(e)
-        })
-    #Manejo de errores generales
+    #Manejo de errores para capturar cualquier excepción que ocurra durante el procesamiento y envío de la notificación, registrando el error y lanzándolo nuevamente para su manejo posterior
     except Exception as e:
-        return response(500, {
-            "message": "Error interno",
-            "error": str(e)
-        })
+        print("Error enviando notificación:", str(e))
+        raise e
+
+#Función auxiliar para obtener la plantilla de notificación desde DynamoDB según el tipo de notificación, realizando una consulta utilizando un índice secundario global para filtrar por el tipo de plantilla y su estado activo
+def get_template(notification_type):
+    key_value = f"{notification_type}#true"
+    #Realiza una consulta a DynamoDB para obtener la plantilla activa correspondiente al tipo de notificación, utilizando un índice secundario global para filtrar por el campo templateTypeStatus
+    response = dynamodb.query(
+        TableName=TEMPLATES_TABLE,
+        IndexName="GSI1_TemplateTypeStatus",
+        KeyConditionExpression="#tts = :value",
+        ExpressionAttributeNames={
+            "#tts": "templateTypeStatus"
+        },
+        ExpressionAttributeValues={
+            ":value": {"S": key_value}
+        }
+    )
+    #Obtiene los items resultantes de la consulta, verificando que exista al menos una plantilla activa para el tipo de notificación solicitado, y si es así, retorna el asunto y contenido de la plantilla para su uso en la generación del email
+    items = response.get("Items", [])
+    #Valida que exista al menos una plantilla activa para el tipo de notificación solicitado
+    if not items:
+        raise ValueError(f"No existe plantilla activa para: {notification_type}")
+    #Retorna el asunto y contenido de la plantilla para su uso en la generación del email
+    item = items[0]
+    #Retorna el asunto y contenido de la plantilla para su uso en la generación del email
+    return {
+        "asunto": item["asunto"]["S"],
+        "contenido": item["contenido"]["S"]
+    }
