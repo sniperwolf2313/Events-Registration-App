@@ -122,6 +122,7 @@ jobs:
       ENVIRONMENT: ${{ inputs.environment }}
       AWS_ROLE_ARN: ${{ vars.AWS_ROLE_ARN }}
       DRY_RUN: ${{ inputs.dry_run }}
+      LAMBDA_ARTIFACTS_BUCKET: ${{ vars.LAMBDA_ARTIFACTS_BUCKET }}
 
     steps:
       - name: Checkout repository
@@ -137,31 +138,6 @@ jobs:
         shell: bash
         run: |
           aws sts get-caller-identity
-
-      - name: Resolve Lambda artifacts bucket
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          BUCKET=$(aws cloudformation list-exports \
-            --region "$AWS_REGION" \
-            --query "Exports[?Name=='${PROJECT_NAME}-${ENVIRONMENT}-FrontendArtifactsBucketName'].Value | [0]" \
-            --output text)
-
-          if [ -z "$BUCKET" ] || [ "$BUCKET" = "None" ]; then
-            BUCKET=$(aws cloudformation list-exports \
-              --region "$AWS_REGION" \
-              --query "Exports[?Name=='${PROJECT_NAME}-${ENVIRONMENT}-FrontendArtifactsBucketName'].Value | [0]" \
-              --output text)
-          fi
-
-          if [ -z "$BUCKET" ] || [ "$BUCKET" = "None" ]; then
-            echo "Could not resolve Lambda artifacts bucket from CloudFormation exports."
-            exit 1
-          fi
-
-          echo "LAMBDA_ARTIFACTS_BUCKET=$BUCKET" >> "$GITHUB_ENV"
-          echo "Using Lambda artifacts bucket: $BUCKET"
 
       - name: Validate Lambda source folder
         shell: bash
