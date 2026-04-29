@@ -146,13 +146,13 @@ jobs:
 
           LAMBDA_FOLDER="${{ matrix.lambda.folder }}"
 
-          if [ ! -d "src/functions/${LAMBDA_FOLDER}" ]; then
-            echo "Missing folder: src/functions/${LAMBDA_FOLDER}"
+          if [ ! -d "Lambdas/${LAMBDA_FOLDER}" ]; then
+            echo "Missing folder: Lambdas/${LAMBDA_FOLDER}"
             exit 1
           fi
 
-          if [ ! -f "src/functions/${LAMBDA_FOLDER}/app.py" ]; then
-            echo "Missing handler file: src/functions/${LAMBDA_FOLDER}/app.py"
+          if [ ! -f "Lambdas/${LAMBDA_FOLDER}/index.py" ]; then
+            echo "Missing handler file: Lambdass/${LAMBDA_FOLDER}/index.py"
             exit 1
           fi
 
@@ -167,17 +167,10 @@ jobs:
           rm -rf "$BUILD_DIR"
           mkdir -p "$BUILD_DIR"
 
-          cp -r "src/functions/${LAMBDA_FOLDER}/." "$BUILD_DIR/"
+          cp -r "Lambdas/${LAMBDA_FOLDER}/." "$BUILD_DIR/"
 
           if [ -d "src/shared" ]; then
             cp -r src/shared/* "$BUILD_DIR/"
-          fi
-
-          if [ -f "src/functions/${LAMBDA_FOLDER}/requirements.txt" ] && [ -s "src/functions/${LAMBDA_FOLDER}/requirements.txt" ]; then
-            python -m pip install --upgrade pip
-            pip install \
-              -r "src/functions/${LAMBDA_FOLDER}/requirements.txt" \
-              -t "$BUILD_DIR"
           fi
 
           find "$BUILD_DIR" -type d -name "__pycache__" -prune -exec rm -rf {} +
