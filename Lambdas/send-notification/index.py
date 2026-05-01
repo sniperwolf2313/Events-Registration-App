@@ -1,38 +1,36 @@
-#importaciones necesarias para manejar la generación de reportes, interacción con DynamoDB, S3 y Lambda
+#Importaciones necesarias para la función Lambda, incluyendo boto3 para interactuar con AWS y json para manejar los datos de entrada y salida. También se importan os para acceder a las variables de entorno.
 import json
 import os
-#importaciones necesarias para manejar la generación de reportes, interacción con DynamoDB, S3 y Lambda
 import boto3
-#Clientes de AWS
+#Inicialización de los clientes de DynamoDB y SES para interactuar con estos servicios de AWS. Se definen las constantes para la tabla de plantillas y el correo electrónico del remitente, que se obtienen de las variables de entorno.
 dynamodb = boto3.client("dynamodb")
 ses = boto3.client("ses")
-#Variables de entorno
+#Constantes para la tabla de plantillas y el correo electrónico del remitente, que se obtienen de las variables de entorno.
 TEMPLATES_TABLE = os.environ["NOTIFICATION_TEMPLATES_TABLE"]
 SES_SENDER_EMAIL = os.environ["SES_SENDER_EMAIL"]
+    #Función principal que maneja el evento de la cola SQS. La función procesa cada mensaje recibido, extrayendo la información necesaria para enviar una notificación por correo electrónico utilizando SES. Se valida que los campos obligatorios estén presentes, se obtiene la plantilla correspondiente al tipo de notificación, se personaliza el contenido del correo y se envía utilizando SES. Si ocurre algún error durante el proceso, se captura y se imprime en los logs.
 
-#Función principal que maneja el evento de SQS, procesa el mensaje y envía la notificación por email utilizando SES
 def handler(event, context):
     try:
-        #Procesa cada mensaje recibido en el evento de SQS
         for record in event["Records"]:
             message = json.loads(record["body"])
-            #Extrae información del mensaje para determinar el tipo de notificación, destinatario y contenido
+
             notification_type = message.get("type")
             recipient_email = message.get("recipientEmail")
-            #Valida que se hayan proporcionado los campos necesarios para enviar la notificación
+
             if not notification_type or not recipient_email:
                 raise ValueError("Los campos type y recipientEmail son obligatorios.")
-            #Obtiene la plantilla de notificación desde DynamoDB según el tipo de notificación
+
             template = get_template(notification_type)
-            #Reemplaza los placeholders en la plantilla con los valores específicos del mensaje
+
             subject = template["asunto"]
             body = template["contenido"]
-            #Reemplaza placeholders en el contenido de la plantilla con los valores del mensaje
+
             body = body.replace("{nombre}", message.get("nombre", ""))
             body = body.replace("{titulo}", message.get("titulo", ""))
             body = body.replace("{reportId}", message.get("reportId", ""))
             body = body.replace("{s3Key}", message.get("s3Key", ""))
-            #Envía el email utilizando SES con el asunto y cuerpo generados a partir de la plantilla
+            #Se envía el correo electrónico utilizando el cliente de SES. Se especifica el remitente, el destinatario, el asunto y el cuerpo del mensaje en formato HTML. Si el envío es exitoso, se devuelve un mensaje de éxito con un código de estado 200. Si ocurre algún error durante el envío, se captura y se imprime en los logs, y se vuelve a lanzar la excepción para que pueda ser manejada por el entorno de ejecución de Lambda.
             ses.send_email(
                 Source=SES_SENDER_EMAIL,
                 Destination={
@@ -44,29 +42,29 @@ def handler(event, context):
                         "Charset": "UTF-8"
                     },
                     "Body": {
-                        "Text": {
+                        "Html": {
                             "Data": body,
                             "Charset": "UTF-8"
                         }
                     }
                 }
             )
-        #Retorna una respuesta exitosa después de procesar todos los mensajes
+        #Si todas las operaciones se realizan correctamente, la función devuelve un mensaje de éxito con un código de estado 200. Si ocurre algún error durante el proceso, se captura y se imprime en los logs, y se vuelve a lanzar la excepción para que pueda ser manejada por el entorno de ejecución de Lambda.
         return {
             "statusCode": 200,
             "body": json.dumps({
                 "message": "Notificación enviada correctamente"
             }, ensure_ascii=False)
         }
-    #Manejo de errores para capturar cualquier excepción que ocurra durante el procesamiento y envío de la notificación, registrando el error y lanzándolo nuevamente para su manejo posterior
+    #Si ocurre algún error durante el proceso, se captura y se imprime en los logs, y se vuelve a lanzar la excepción para que pueda ser manejada por el entorno de ejecución de Lambda. Esto permite que cualquier error que ocurra durante el envío de la notificación sea registrado en los logs de CloudWatch y también permita que el entorno de ejecución de Lambda maneje la excepción según su configuración (por ejemplo, reintentos o notificaciones).
     except Exception as e:
         print("Error enviando notificación:", str(e))
         raise e
 
-#Función auxiliar para obtener la plantilla de notificación desde DynamoDB según el tipo de notificación, realizando una consulta utilizando un índice secundario global para filtrar por el tipo de plantilla y su estado activo
+#Función auxiliar que consulta la tabla de DynamoDB para obtener la plantilla de notificación correspondiente al tipo de notificación especificado. La función realiza una consulta utilizando el método query del cliente de DynamoDB, especificando la tabla, el índice secundario global y la expresión de condición de clave para filtrar por el tipo de plantilla y su estado activo. Si se encuentra una plantilla activa para el tipo especificado, se devuelve un diccionario con el asunto y el contenido de la plantilla. Si no se encuentra ninguna plantilla activa, se lanza una excepción indicando que no existe una plantilla activa para ese tipo de notificación.
 def get_template(notification_type):
     key_value = f"{notification_type}#true"
-    #Realiza una consulta a DynamoDB para obtener la plantilla activa correspondiente al tipo de notificación, utilizando un índice secundario global para filtrar por el campo templateTypeStatus
+       
     response = dynamodb.query(
         TableName=TEMPLATES_TABLE,
         IndexName="GSI1_TemplateTypeStatus",
@@ -78,14 +76,14 @@ def get_template(notification_type):
             ":value": {"S": key_value}
         }
     )
-    #Obtiene los items resultantes de la consulta, verificando que exista al menos una plantilla activa para el tipo de notificación solicitado, y si es así, retorna el asunto y contenido de la plantilla para su uso en la generación del email
+    #Se obtiene la lista de items devueltos por la consulta a DynamoDB. Si no se encuentra ninguna plantilla activa para el tipo de notificación especificado, se lanza una excepción indicando que no existe una plantilla activa para ese tipo. Si se encuentra una plantilla activa, se extrae el asunto y el contenido de la plantilla y se devuelve como un diccionario.
     items = response.get("Items", [])
-    #Valida que exista al menos una plantilla activa para el tipo de notificación solicitado
+    #Si no se encuentra ninguna plantilla activa para el tipo de notificación especificado, se lanza una excepción indicando que no existe una plantilla activa para ese tipo. Si se encuentra una plantilla activa, se extrae el asunto y el contenido de la plantilla y se devuelve como un diccionario.
     if not items:
         raise ValueError(f"No existe plantilla activa para: {notification_type}")
-    #Retorna el asunto y contenido de la plantilla para su uso en la generación del email
+    #Si se encuentra una plantilla activa, se extrae el asunto y el contenido de la plantilla y se devuelve como un diccionario.
     item = items[0]
-    #Retorna el asunto y contenido de la plantilla para su uso en la generación del email
+    #Si se encuentra una plantilla activa, se extrae el asunto y el contenido de la plantilla y se devuelve como un diccionario.
     return {
         "asunto": item["asunto"]["S"],
         "contenido": item["contenido"]["S"]
