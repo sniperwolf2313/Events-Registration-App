@@ -2,6 +2,7 @@
 import json
 import os
 import boto3
+#
 from boto3.dynamodb.conditions import Key
 
 # Variables de entorno
@@ -70,7 +71,6 @@ def handler(event, context):
 #Función auxiliar que consulta la tabla de DynamoDB para obtener la plantilla de notificación correspondiente al tipo de notificación especificado. La función realiza una consulta utilizando el método query del cliente de DynamoDB, especificando la tabla, el índice secundario global y la expresión de condición de clave para filtrar por el tipo de plantilla y su estado activo. Si se encuentra una plantilla activa para el tipo especificado, se devuelve un diccionario con el asunto y el contenido de la plantilla. Si no se encuentra ninguna plantilla activa, se lanza una excepción indicando que no existe una plantilla activa para ese tipo de notificación.
 def get_template(notification_type):
     key_value = f"{notification_type}#true"
-
     response = table.query(
         IndexName="GSI1_TemplateTypeStatus",
         KeyConditionExpression=Key("templateTypeStatus").eq(key_value)
