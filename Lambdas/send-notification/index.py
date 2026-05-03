@@ -1,4 +1,5 @@
 #Importaciones necesarias para la función Lambda, incluyendo boto3 para interactuar con AWS y json para manejar los datos de entrada y salida. También se importan os para acceder a las variables de entorno.
+#Importaciones necesarias para la función Lambda, incluyendo boto3 para interactuar con AWS y json para manejar los datos de entrada y salida. También se importan os para acceder a las variables de entorno.
 import json
 import os
 import boto3
@@ -35,7 +36,8 @@ def handler(event, context):
 
             body = body.replace("{nombre}", message.get("nombre", ""))
             body = body.replace("{titulo}", message.get("titulo", ""))
-            body = body.replace("{reportId}", message.get("reportId", ""))
+            body = body.replace("{fechaInicio}", message.get("fechaInicio", ""))
+            body = body.replace("{horaInicio}", message.get("horaInicio", ""))
             body = body.replace("{s3Key}", message.get("s3Key", ""))
             #Se envía el correo electrónico utilizando el cliente de SES. Se especifica el remitente, el destinatario, el asunto y el cuerpo del mensaje en formato HTML. Si el envío es exitoso, se devuelve un mensaje de éxito con un código de estado 200. Si ocurre algún error durante el envío, se captura y se imprime en los logs, y se vuelve a lanzar la excepción para que pueda ser manejada por el entorno de ejecución de Lambda.
             ses.send_email(
