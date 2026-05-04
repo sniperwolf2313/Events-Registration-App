@@ -1,80 +1,281 @@
-#Importa para el manejo de JSON, variables de entorno, generación de UUIDs, manejo de fechas y el cliente de SQS de AWS SDK para Python (boto3).
 import json
 import os
-from datetime import datetime, timezone
+import re
 import uuid
-#Crea un cliente de SQS utilizando boto3 para interactuar con la cola de mensajes.
+from datetime import datetime, timezone
+from decimal import Decimal
+
 import boto3
 from botocore.exceptions import ClientError
-#Obtiene la URL de la cola de reportes desde las variables de entorno, lo que permite una configuración flexible sin necesidad de modificar el código.
-sqs = boto3.client("sqs")
-#REPORTS_QUEUE_URL es una variable que almacena la URL de la cola de SQS donde se enviarán las solicitudes de generación de reportes. Esta URL se obtiene de las variables de entorno, lo que permite una configuración flexible sin necesidad de modificar el código.  
-REPORTS_QUEUE_URL = os.environ["REPORTS_QUEUE_URL"]
 
-#Función auxiliar para formatear las respuestas HTTP de manera consistente, incluyendo el código de estado, los encabezados y el cuerpo en formato JSON.
+dynamodb = boto3.resource("dynamodb")
+sqs = boto3.client("sqs")
+
+EVENTS_TABLE = os.environ["EVENTS_TABLE"]
+REPORTS_TABLE = os.environ["REPORTS_TABLE"]
+REPORT_QUEUE_URL = os.environ["REPORT_QUEUE_URL"]
+
+events_table = dynamodb.Table(EVENTS_TABLE)
+reports_table = dynamodb.Table(REPORTS_TABLE)
+
+REPORT_TYPE_EVENT_REGISTRATIONS = "EVENT_REGISTRATIONS"
+
+
 def response(status_code, body):
     return {
         "statusCode": status_code,
         "headers": {
             "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*"
+            "Access-Control-Allow-Origin": "*",
         },
-        "body": json.dumps(body, ensure_ascii=False)
+        "body": json.dumps(body, ensure_ascii=False),
     }
 
-# Función principal del Lambda que maneja la creación de solicitudes de reportes. Recibe un evento y un contexto, procesa la solicitud para crear una nueva solicitud de reporte, valida los campos requeridos, genera un ID único para el reporte, envía el mensaje a la cola de SQS y devuelve una respuesta adecuada según el resultado de la operación.
+
+def utc_now():
+    return datetime.now(timezone.utc)
+
+
+def iso_z(dt):
+    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def decimal_to_native(value):
+    if isinstance(value, Decimal):
+        if value % 1 == 0:
+            return int(value)
+        return float(value)
+
+    if isinstance(value, list):
+        return [decimal_to_native(item) for item in value]
+
+    if isinstance(value, dict):
+        return {key: decimal_to_native(item) for key, item in value.items()}
+
+    return value
+
+
+def parse_body(event):
+    body = event.get("body")
+
+    if isinstance(body, str):
+        if not body.strip():
+            return {}
+        return json.loads(body)
+
+    if isinstance(body, dict):
+        return body
+
+    if "requestContext" in event:
+        return {}
+
+    return event
+
+
+def get_claims(event):
+    return (
+        event.get("requestContext", {})
+        .get("authorizer", {})
+        .get("jwt", {})
+        .get("claims", {})
+    )
+
+
+def normalize_groups(groups_value):
+    if not groups_value:
+        return []
+
+    if isinstance(groups_value, list):
+        normalized = []
+
+        for group in groups_value:
+            value = str(group).strip()
+            value = (
+                value.replace("[", "")
+                .replace("]", "")
+                .replace('"', "")
+                .replace("'", "")
+            )
+
+            normalized.extend([
+                item.strip()
+                for item in re.split(r"[,\s]+", value)
+                if item.strip()
+            ])
+
+        return normalized
+
+    if isinstance(groups_value, str):
+        value = (
+            groups_value.strip()
+            .replace("[", "")
+            .replace("]", "")
+            .replace('"', "")
+            .replace("'", "")
+        )
+
+        return [
+            item.strip()
+            for item in re.split(r"[,\s]+", value)
+            if item.strip()
+        ]
+
+    return []
+
+
+def require_organizer(event):
+    claims = get_claims(event)
+
+    if not claims:
+        return None, response(401, {
+            "message": "Unauthorized",
+            "reason": "No JWT claims found."
+        })
+
+    groups = normalize_groups(claims.get("cognito:groups"))
+
+    if "organizers" not in groups:
+        return None, response(403, {
+            "message": "Forbidden",
+            "requiredGroup": "organizers",
+            "currentGroups": groups
+        })
+
+    return claims, None
+
+
+def get_event(event_id):
+    result = events_table.get_item(
+        Key={
+            "eventId": event_id
+        }
+    )
+
+    item = result.get("Item")
+    return decimal_to_native(item) if item else None
+
+
+def put_report_metadata(report_item):
+    reports_table.put_item(
+        Item=report_item,
+        ConditionExpression="attribute_not_exists(reportId)"
+    )
+
+
+def send_report_request(report_item):
+    message_body = {
+        "reportId": report_item["reportId"],
+        "reportType": report_item["reportType"],
+        "format": report_item["format"],
+        "eventId": report_item["eventId"],
+        "requestedByEmail": report_item["requestedByEmail"],
+        "createdAt": report_item["createdAt"],
+    }
+
+    params = {
+        "QueueUrl": REPORT_QUEUE_URL,
+        "MessageBody": json.dumps(message_body, ensure_ascii=False)
+    }
+
+    if REPORT_QUEUE_URL.endswith(".fifo"):
+        # Un solo MessageGroupId garantiza orden global de llegada.
+        params["MessageGroupId"] = "reports"
+        params["MessageDeduplicationId"] = report_item["reportId"]
+
+    result = sqs.send_message(**params)
+
+    return {
+        "messageId": result.get("MessageId")
+    }
+
+
 def handler(event, context):
     try:
-        #Intenta extraer el cuerpo de la solicitud, que puede ser una cadena JSON o un objeto ya parseado. Si el cuerpo es una cadena, se convierte a un diccionario utilizando json.loads. Si el cuerpo es None, se asigna el evento completo como el cuerpo.
-        body = event.get("body")
-        #Verifica que los campos requeridos "reportType" y "requestedBy" estén presentes en el cuerpo de la solicitud. Si faltan campos obligatorios, devuelve una respuesta con un código de estado 400 (Bad Request) indicando qué campos faltan.
-        if isinstance(body, str):
-            body = json.loads(body)
-        elif body is None:
-            body = event
-        #Define una lista de campos requeridos para la solicitud de reporte y verifica si alguno de estos campos falta en el cuerpo de la solicitud. Si faltan campos obligatorios, devuelve una respuesta con un código de estado 400 (Bad Request) indicando qué campos faltan.
-        required_fields = [
-            "reportType",
-            "requestedBy"
-        ]
-        #missing es una lista que contiene los nombres de los campos requeridos que no están presentes en el cuerpo de la solicitud. Se utiliza una comprensión de listas para iterar sobre los campos requeridos y verificar si cada campo está presente en el cuerpo de la solicitud utilizando body.get(field). Si un campo no está presente, se agrega a la lista missing.
-        missing = [field for field in required_fields if not body.get(field)]
-        #Si la lista missing no está vacía, significa que faltan campos obligatorios en la solicitud. En este caso, se devuelve una respuesta con un código de estado 400 (Bad Request) y un mensaje indicando que faltan campos obligatorios, junto con la lista de campos que faltan.
-        if missing:
+        claims, auth_error = require_organizer(event)
+
+        if auth_error:
+            return auth_error
+
+        body = parse_body(event)
+
+        event_id = body.get("eventId")
+
+        if not event_id:
             return response(400, {
-                "message": "Faltan campos obligatorios",
-                "missingFields": missing
+                "message": "eventId is required."
             })
-        #Genera un ID único para el reporte utilizando uuid.uuid4() y formatea el ID con un prefijo "RPT-" seguido de
-        report_id = f"RPT-{str(uuid.uuid4())[:8].upper()}"
-        #Crea un mensaje que contiene la información de la solicitud de reporte, incluyendo el ID del reporte, el tipo de reporte, quién lo solicitó, los filtros opcionales, el estado inicial del reporte (pendiente) y la fecha de creación en formato ISO 8601. Este mensaje se envía a la cola de SQS para su procesamiento posterior.
-        message = {
+
+        report_type = body.get("reportType", REPORT_TYPE_EVENT_REGISTRATIONS)
+        report_format = body.get("format", "CSV").upper()
+
+        if report_type != REPORT_TYPE_EVENT_REGISTRATIONS:
+            return response(400, {
+                "message": "Unsupported reportType.",
+                "allowedReportTypes": [
+                    REPORT_TYPE_EVENT_REGISTRATIONS
+                ]
+            })
+
+        if report_format != "CSV":
+            return response(400, {
+                "message": "Unsupported format.",
+                "allowedFormats": [
+                    "CSV"
+                ]
+            })
+
+        event_item = get_event(event_id)
+
+        if not event_item:
+            return response(404, {
+                "message": "Event not found.",
+                "eventId": event_id
+            })
+
+        requested_by = claims.get("sub")
+        requested_by_email = claims.get("email")
+
+        if not requested_by_email:
+            return response(400, {
+                "message": "email claim is required."
+            })
+
+        now_iso = iso_z(utc_now())
+        report_id = f"RPT-{uuid.uuid4().hex[:10].upper()}"
+
+        report_item = {
             "reportId": report_id,
-            "reportType": body["reportType"],
-            "requestedBy": body["requestedBy"],
-            "filters": body.get("filters", {}),
-            "status": "pendiente",
-            "createdAt": datetime.now(timezone.utc).isoformat()
+            "reportType": report_type,
+            "format": report_format,
+            "eventId": event_id,
+            "requestedByEmail": requested_by_email,
+            "createdAt": now_iso
         }
-        #Envía el mensaje a la cola de SQS utilizando el cliente de SQS. El mensaje se convierte a una cadena JSON utilizando json.dumps antes de enviarlo. Si el envío es exitoso, devuelve una respuesta con un código de estado 202 (Accepted) y un mensaje indicando que la solicitud de reporte fue recibida correctamente, junto con los datos del mensaje enviado.
-        sqs.send_message(
-            QueueUrl=REPORTS_QUEUE_URL,
-            MessageBody=json.dumps(message, ensure_ascii=False)
-        )
-        #Si el envío es exitoso, devuelve una respuesta con un código de estado 202 (Accepted) y un mensaje indicando que la solicitud de reporte fue recibida correctamente, junto con los datos del mensaje enviado.
+
+        put_report_metadata(report_item)
+        queue_result = send_report_request(report_item)
+
         return response(202, {
-            "message": "Solicitud de reporte recibida correctamente",
-            "data": message
+            "message": "Report request accepted.",
+            "report": report_item
         })
-    #Si ocurre un error específico de SQS, como una excepción de ClientError, devuelve una respuesta con un código de estado 500 (Internal Server Error) y un mensaje indicando que hubo un error al enviar la solicitud de reporte a la cola, junto con los detalles del error.
-    except ClientError as e:
+
+    except ClientError as exc:
+        error_code = exc.response.get("Error", {}).get("Code")
+
+        if error_code == "ConditionalCheckFailedException":
+            return response(409, {
+                "message": "Report already exists."
+            })
+
         return response(500, {
-            "message": "Error al enviar la solicitud de reporte a la cola",
-            "error": str(e)
+            "message": "Error creating report request.",
+            "awsErrorCode": error_code,
+            "error": str(exc)
         })
-    #Si ocurre cualquier otro tipo de excepción, devuelve una respuesta con un código de estado 500 (Internal Server Error) y un mensaje indicando que hubo un error interno, junto con los detalles del error.
-    except Exception as e:
+
+    except Exception as exc:
         return response(500, {
-            "message": "Error interno",
-            "error": str(e)
+            "message": "Internal error.",
+            "error": str(exc)
         })
