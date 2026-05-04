@@ -1,132 +1,386 @@
-#importación de las bibliotecas necesarias para la función Lambda. Se importan módulos para manejar JSON, interactuar con el sistema operativo, trabajar con CSV, generar identificadores únicos, manejar fechas y horas, y trabajar con flujos de texto. También se importan los clientes de AWS SDK para DynamoDB, S3 y Lambda.
+import csv
+import io
 import json
 import os
-import csv
-import uuid
+import traceback
 from datetime import datetime, timezone
-from io import StringIO
+from decimal import Decimal
 
 import boto3
-#Inicialización de los clientes de DynamoDB, S3 y Lambda para interactuar con estos servicios de AWS. Se definen las constantes para las tablas de DynamoDB, el bucket de S3 y el nombre de la función Lambda que se utilizará para enviar el reporte, que se obtienen de las variables de entorno.
-dynamodb = boto3.client("dynamodb")
+from boto3.dynamodb.conditions import Key
+from botocore.exceptions import ClientError
+
+dynamodb = boto3.resource("dynamodb")
 s3 = boto3.client("s3")
-lambda_client = boto3.client("lambda")
-#Constantes para las tablas de DynamoDB, el bucket de S3 y el nombre de la función Lambda que se utilizará para enviar el reporte, que se obtienen de las variables de entorno.
+sqs = boto3.client("sqs")
+
+EVENTS_TABLE = os.environ["EVENTS_TABLE"]
 REGISTRATIONS_TABLE = os.environ["REGISTRATIONS_TABLE"]
 REPORTS_TABLE = os.environ["REPORTS_TABLE"]
 REPORTS_BUCKET = os.environ["REPORTS_BUCKET"]
-#Constante para el nombre de la función Lambda que se utilizará para enviar el reporte, que se obtiene de las variables de entorno.
-SEND_REPORT_FUNCTION = "event-manager-dev-SendReport"
+NOTIFICATIONS_QUEUE_URL = os.environ["NOTIFICATIONS_QUEUE_URL"]
 
-#función principal del Lambda que se ejecuta cuando se recibe un evento. Procesa cada registro del evento, extrae la información necesaria para generar el reporte, obtiene las inscripciones correspondientes al evento especificado, genera un archivo CSV con los datos de las inscripciones, lo guarda en S3 y luego invoca otra función Lambda para enviar el reporte por correo electrónico. Si ocurre algún error durante el proceso, se captura y se imprime en los logs, y se vuelve a lanzar la excepción para que pueda ser manejada por el entorno de ejecución de Lambda.   
-def handler(event, context):
-    try:#Itera sobre cada registro en el evento recibido, que se espera que contenga mensajes con la información necesaria para generar el reporte. Para cada mensaje, se extraen los campos necesarios, se obtiene las inscripciones correspondientes al evento especificado, se genera un archivo CSV con los datos de las inscripciones, se guarda en S3 y luego se invoca otra función Lambda para enviar el reporte por correo electrónico.
-        for record in event["Records"]:
-            message = json.loads(record["body"])
+REPORTS_PREFIX = os.environ.get("REPORTS_PREFIX", "reports")
+PRESIGNED_URL_EXPIRES_SECONDS = int(os.environ.get("PRESIGNED_URL_EXPIRES_SECONDS", "86400"))
 
-            report_id = message.get("reportId", f"RPT-{str(uuid.uuid4())[:8].upper()}")
-            report_type = message.get("reportType", "inscripciones")
-            requested_by = message.get("requestedBy", "admin")
-            recipient_email = message.get("recipientEmail")
-            filters = message.get("filters", {})
+events_table = dynamodb.Table(EVENTS_TABLE)
+registrations_table = dynamodb.Table(REGISTRATIONS_TABLE)
+reports_table = dynamodb.Table(REPORTS_TABLE)
 
-            event_id = filters.get("eventId")
-            #Validación de los campos necesarios para generar el reporte. Se verifica que el campo eventId esté presente en los filtros, ya que es necesario para obtener las inscripciones correspondientes al evento. También se verifica que el campo recipientEmail esté presente, ya que es necesario para enviar el reporte por correo electrónico. Si alguno de estos campos falta, se lanza una excepción indicando que son obligatorios.
-            if not event_id:
-                raise ValueError("El filtro eventId es obligatorio para generar el reporte.")
+REPORT_STATUS_PROCESSING = "PROCESSING"
+REPORT_STATUS_COMPLETED = "COMPLETED"
+REPORT_STATUS_FAILED = "FAILED"
 
-            if not recipient_email:
-                raise ValueError("El campo recipientEmail es obligatorio para enviar el reporte.")
 
-            registrations = get_registrations_by_event(event_id)
+def utc_now():
+    return datetime.now(timezone.utc)
 
-            csv_content = generate_csv(registrations)
 
-            file_key = f"reports/{report_id}.csv"
-            #Se guarda el archivo CSV generado en S3 utilizando el método put_object del cliente de S3. Se especifica el bucket, la clave del archivo (que incluye el ID del reporte) y el contenido del archivo en formato CSV. También se establece el tipo de contenido como "text/csv" para que se reconozca correctamente al descargarlo.
-            s3.put_object(
-                Bucket=REPORTS_BUCKET,
-                Key=file_key,
-                Body=csv_content.encode("utf-8-sig"),
-                ContentType="text/csv"
-            )
-            #Se obtiene la fecha y hora actual en formato ISO 8601 con zona horaria UTC para registrar cuándo se generó el reporte. Luego, se guarda un registro del reporte generado en la tabla de DynamoDB utilizando el método put_item del cliente de DynamoDB. Se especifica la tabla, la clave del item (reportId) y los atributos del reporte, incluyendo el tipo de reporte, quién lo solicitó, el correo del destinatario, el estado del reporte, la ubicación en S3 y las fechas de creación y generación.
-            now = datetime.now(timezone.utc).isoformat()
-            #Se guarda un registro del reporte generado en la tabla de DynamoDB utilizando el método put_item del cliente de DynamoDB. Se especifica la tabla, la clave del item (reportId) y los atributos del reporte, incluyendo el tipo de reporte, quién lo solicitó, el correo del destinatario, el estado del reporte, la ubicación en S3 y las fechas de creación y generación.
-            dynamodb.put_item(
-                TableName=REPORTS_TABLE,
-                Item={
-                    "reportId": {"S": report_id},
-                    "reportType": {"S": report_type},
-                    "requestedBy": {"S": requested_by},
-                    "recipientEmail": {"S": recipient_email},
-                    "status": {"S": "generated"},
-                    "s3Bucket": {"S": REPORTS_BUCKET},
-                    "s3Key": {"S": file_key},
-                    "createdAt": {"S": now},
-                    "generatedAt": {"S": now}
-                }
-            )
-            #Se invoca la función Lambda encargada de enviar el reporte por correo electrónico utilizando el método invoke del cliente de Lambda. Se especifica el nombre de la función, el tipo de invocación (Event para invocación asíncrona) y el payload que contiene la información necesaria para enviar el reporte, incluyendo el ID del reporte, la ubicación en S3, quién lo solicitó y el correo del destinatario. El payload se codifica en formato JSON antes de enviarlo.
-            lambda_client.invoke(
-                FunctionName=SEND_REPORT_FUNCTION,
-                InvocationType="Event",
-                Payload=json.dumps({
-                    "reportId": report_id,
-                    "s3Bucket": REPORTS_BUCKET,
-                    "s3Key": file_key,
-                    "requestedBy": requested_by,
-                    "recipientEmail": recipient_email
-                }).encode("utf-8")
-            )
-        #Si todas las operaciones se realizan correctamente, la función devuelve un mensaje de éxito con un código de estado 200. Si ocurre algún error durante el proceso, se captura y se imprime en los logs, y se vuelve a lanzar la excepción para que pueda ser manejada por el entorno de ejecución de Lambda.
-        return {
-            "statusCode": 200,
-            "body": json.dumps({
-                "message": "Reporte generado correctamente"
-            }, ensure_ascii=False)
-        }
-    #Si ocurre algún error durante el proceso, se captura y se imprime en los logs, y se vuelve a lanzar la excepción para que pueda ser manejada por el entorno de ejecución de Lambda. Esto permite que cualquier error que ocurra durante la generación del reporte sea registrado en los logs de CloudWatch y también permita que el entorno de ejecución de Lambda maneje la excepción según su configuración (por ejemplo, reintentos o notificaciones).
-    except Exception as e:
-        print("Error generando reporte:", str(e))
-        raise e
+def iso_z(dt):
+    return dt.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
-#Función auxiliar que consulta la tabla de DynamoDB para obtener las inscripciones correspondientes a un evento específico. La función realiza una consulta utilizando el método query del cliente de DynamoDB, especificando la tabla, la expresión de condición de clave y los valores de los atributos necesarios para filtrar por el ID del evento. La función devuelve una lista de items que representan las inscripciones encontradas para el evento especificado.
-def get_registrations_by_event(event_id):
-    response = dynamodb.query(
-        TableName=REGISTRATIONS_TABLE,
-        KeyConditionExpression="eventId = :eventId",
-        ExpressionAttributeValues={
-            ":eventId": {"S": event_id}
+
+def decimal_to_native(value):
+    if isinstance(value, Decimal):
+        if value % 1 == 0:
+            return int(value)
+        return float(value)
+
+    if isinstance(value, list):
+        return [decimal_to_native(item) for item in value]
+
+    if isinstance(value, dict):
+        return {key: decimal_to_native(item) for key, item in value.items()}
+
+    return value
+
+
+def parse_json(value):
+    if value is None:
+        return {}
+
+    if isinstance(value, dict):
+        return value
+
+    if isinstance(value, str):
+        if not value.strip():
+            return {}
+        return json.loads(value)
+
+    return {}
+
+
+def parse_sqs_record(record):
+    body = parse_json(record.get("body"))
+
+    if isinstance(body.get("Message"), str):
+        return json.loads(body["Message"])
+
+    return body
+
+
+def get_event(event_id):
+    result = events_table.get_item(
+        Key={
+            "eventId": event_id
         }
     )
 
-    return response.get("Items", [])
+    item = result.get("Item")
+    return decimal_to_native(item) if item else None
 
-#Función auxiliar que genera un archivo CSV a partir de una lista de items que representan las inscripciones. La función utiliza el módulo csv para escribir los datos en formato CSV, creando un flujo de texto en memoria utilizando StringIO. Se escribe una fila de encabezado con los nombres de las columnas, y luego se itera sobre cada item para escribir una fila con los valores correspondientes a cada columna. Finalmente, se devuelve el contenido del archivo CSV como una cadena de texto.
-def generate_csv(items):
-    output = StringIO()
-    writer = csv.writer(output)
 
-    writer.writerow([
-        "eventId",
-        "userId",
-        "nombreCompleto",
-        "correo",
-        "registrationDate",
-        "status",
-        "attendanceStatus"
-    ])
-    #Se itera sobre cada item en la lista de inscripciones y se escribe una fila en el archivo CSV con los valores correspondientes a cada columna. Se utiliza el método get para extraer los valores de cada campo del item, proporcionando un valor predeterminado vacío en caso de que el campo no exista. Esto asegura que el archivo CSV se genere correctamente incluso si algunos campos están ausentes en los items.
-    for item in items:
-        writer.writerow([
-            item.get("eventId", {}).get("S", ""),
-            item.get("userId", {}).get("S", ""),
-            item.get("nombreCompleto", {}).get("S", ""),
-            item.get("correo", {}).get("S", ""),
-            item.get("registrationDate", {}).get("S", ""),
-            item.get("status", {}).get("S", ""),
-            item.get("attendanceStatus", {}).get("S", "")
+def query_registrations(event_id):
+    items = []
+    last_key = None
+
+    while True:
+        params = {
+            "KeyConditionExpression": Key("eventId").eq(event_id)
+        }
+
+        if last_key:
+            params["ExclusiveStartKey"] = last_key
+
+        result = registrations_table.query(**params)
+
+        items.extend([
+            decimal_to_native(item)
+            for item in result.get("Items", [])
         ])
 
-    return output.getvalue()
+        last_key = result.get("LastEvaluatedKey")
+
+        if not last_key:
+            break
+
+    return items
+
+
+def update_report(report_id, status, values=None):
+    values = values or {}
+    values["status"] = status
+    values["updatedAt"] = iso_z(utc_now())
+
+    expression_names = {}
+    expression_values = {}
+    parts = []
+
+    for index, (key, value) in enumerate(values.items()):
+        name_placeholder = f"#f{index}"
+        value_placeholder = f":v{index}"
+
+        expression_names[name_placeholder] = key
+        expression_values[value_placeholder] = value
+        parts.append(f"{name_placeholder} = {value_placeholder}")
+
+    reports_table.update_item(
+        Key={
+            "reportId": report_id
+        },
+        UpdateExpression="SET " + ", ".join(parts),
+        ExpressionAttributeNames=expression_names,
+        ExpressionAttributeValues=expression_values
+    )
+
+
+def build_csv(event_item, registrations, report_metadata):
+    output = io.StringIO()
+    writer = csv.writer(output)
+
+    registered = [
+        item for item in registrations
+        if item.get("status") == "REGISTERED"
+    ]
+
+    cancelled = [
+        item for item in registrations
+        if item.get("status") == "CANCELLED"
+    ]
+
+    writer.writerow(["Report"])
+    writer.writerow(["reportId", report_metadata["reportId"]])
+    writer.writerow(["reportType", report_metadata["reportType"]])
+    writer.writerow(["generatedAt", iso_z(utc_now())])
+    writer.writerow([])
+
+    writer.writerow(["Event"])
+    writer.writerow(["eventId", event_item.get("eventId", "")])
+    writer.writerow(["title", event_item.get("title", "")])
+    writer.writerow(["location", event_item.get("location", "")])
+    writer.writerow(["startDate", event_item.get("startDate", "")])
+    writer.writerow(["endDate", event_item.get("endDate", "")])
+    writer.writerow(["status", event_item.get("status", "")])
+    writer.writerow(["capacity", event_item.get("capacity", 0)])
+    writer.writerow(["availableSlots", event_item.get("availableSlots", 0)])
+    writer.writerow([])
+
+    writer.writerow(["Summary"])
+    writer.writerow(["totalRegistrations", len(registrations)])
+    writer.writerow(["totalRegistered", len(registered)])
+    writer.writerow(["totalCancelled", len(cancelled)])
+    writer.writerow([])
+
+    writer.writerow([
+        "userId",
+        "fullName",
+        "email",
+        "registrationDate",
+        "status"
+    ])
+
+    for item in sorted(registrations, key=lambda row: row.get("registrationDate", "")):
+        writer.writerow([
+            item.get("userId", ""),
+            item.get("fullName", ""),
+            item.get("email", ""),
+            item.get("registrationDate", ""),
+            item.get("status", "")
+        ])
+
+    return output.getvalue(), {
+        "totalRegistrations": len(registrations),
+        "totalRegistered": len(registered),
+        "totalCancelled": len(cancelled)
+    }
+
+
+def upload_report(report_id, csv_content):
+    date_prefix = utc_now().strftime("%Y/%m/%d")
+    key = f"{REPORTS_PREFIX}/{date_prefix}/{report_id}.csv"
+
+    s3.put_object(
+        Bucket=REPORTS_BUCKET,
+        Key=key,
+        Body=csv_content.encode("utf-8-sig"),
+        ContentType="text/csv; charset=utf-8",
+        Metadata={
+            "report-id": report_id
+        }
+    )
+
+    return key
+
+
+def generate_download_url(bucket, key):
+    return s3.generate_presigned_url(
+        ClientMethod="get_object",
+        Params={
+            "Bucket": bucket,
+            "Key": key
+        },
+        ExpiresIn=PRESIGNED_URL_EXPIRES_SECONDS
+    )
+
+
+def enqueue_report_ready_notification(report_data):
+    message = {
+        "type": "REPORT_READY",
+        "channel": "EMAIL",
+        "templateType": "REPORT_READY",
+        "to": report_data["requestedByEmail"],
+        "templateData": {
+            "reportId": report_data["reportId"],
+            "eventId": report_data["eventId"],
+            "downloadUrl": report_data["downloadUrl"],
+            "expiresInSeconds": PRESIGNED_URL_EXPIRES_SECONDS,
+            "totalRegistrations": report_data["summary"]["totalRegistrations"],
+            "totalRegistered": report_data["summary"]["totalRegistered"],
+            "totalCancelled": report_data["summary"]["totalCancelled"]
+        }
+    }
+
+    params = {
+        "QueueUrl": NOTIFICATIONS_QUEUE_URL,
+        "MessageBody": json.dumps(message, ensure_ascii=False)
+    }
+
+    if NOTIFICATIONS_QUEUE_URL.endswith(".fifo"):
+        params["MessageGroupId"] = f"report-{report_data['reportId']}"
+        params["MessageDeduplicationId"] = f"REPORT_READY-{report_data['reportId']}"
+
+    result = sqs.send_message(**params)
+
+    return {
+        "messageId": result.get("MessageId")
+    }
+
+
+def process_report_request(payload):
+    report_id = payload["reportId"]
+    event_id = payload["eventId"]
+
+    update_report(
+        report_id=report_id,
+        status=REPORT_STATUS_PROCESSING
+    )
+
+    event_item = get_event(event_id)
+
+    if not event_item:
+        raise ValueError(f"Event not found: {event_id}")
+
+    registrations = query_registrations(event_id)
+
+    csv_content, summary = build_csv(
+        event_item=event_item,
+        registrations=registrations,
+        report_metadata=payload
+    )
+
+    s3_key = upload_report(
+        report_id=report_id,
+        csv_content=csv_content
+    )
+
+    download_url = generate_download_url(
+        bucket=REPORTS_BUCKET,
+        key=s3_key
+    )
+
+    notification_result = enqueue_report_ready_notification({
+        "reportId": report_id,
+        "eventId": event_id,
+        "requestedByEmail": payload["requestedByEmail"],
+        "downloadUrl": download_url,
+        "summary": summary
+    })
+
+    update_report(
+        report_id=report_id,
+        status=REPORT_STATUS_COMPLETED,
+        values={
+            "s3Bucket": REPORTS_BUCKET,
+            "s3Key": s3_key,
+            "downloadUrlExpiresInSeconds": PRESIGNED_URL_EXPIRES_SECONDS,
+            "summary": summary
+        }
+    )
+
+    return {
+        "reportId": report_id,
+        "eventId": event_id,
+        "s3Bucket": REPORTS_BUCKET,
+        "s3Key": s3_key,
+        "summary": summary,
+        "notification": notification_result
+    }
+
+
+def mark_report_failed(payload, error_message):
+    report_id = payload.get("reportId")
+
+    if not report_id:
+        return
+
+    update_report(
+        report_id=report_id,
+        status=REPORT_STATUS_FAILED,
+        values={
+            "failedAt": iso_z(utc_now()),
+            "errorMessage": error_message
+        }
+    )
+
+
+def handler(event, context):
+    batch_item_failures = []
+    results = []
+
+    for record in event.get("Records", []):
+        message_id = record.get("messageId")
+
+        try:
+            payload = parse_sqs_record(record)
+
+            print("Processing report request:")
+            print(json.dumps(payload, ensure_ascii=False))
+
+            result = process_report_request(payload)
+
+            print("Report generated:")
+            print(json.dumps(result, ensure_ascii=False))
+
+            results.append(result)
+
+        except Exception as exc:
+            print("Error generating report:")
+            print(str(exc))
+            print(traceback.format_exc())
+
+            try:
+                payload = parse_sqs_record(record)
+                mark_report_failed(payload, str(exc))
+            except Exception:
+                print("Could not mark report as failed.")
+                print(traceback.format_exc())
+
+            if message_id:
+                batch_item_failures.append({
+                    "itemIdentifier": message_id
+                })
+
+    return {
+        "batchItemFailures": batch_item_failures,
+        "results": results
+    }
