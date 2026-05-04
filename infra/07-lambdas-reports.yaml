@@ -30,11 +30,6 @@ Resources:
     Properties:
       LogGroupName: !Sub /aws/lambda/${ProjectName}-${Environment}-GenerateReport
       RetentionInDays: !Ref LambdaLogRetentionDays
-  SendReportLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub /aws/lambda/${ProjectName}-${Environment}-SendReport
-      RetentionInDays: !Ref LambdaLogRetentionDays
   CreateReportRole:
     Type: AWS::IAM::Role
     Properties:
@@ -68,6 +63,11 @@ Resources:
                   - dynamodb:UpdateItem
                 Resource: !ImportValue
                   Fn::Sub: ${ProjectName}-${Environment}-ReportsTableArn
+              - Effect: Allow
+                Action:
+                  - dynamodb:GetItem
+                Resource: !ImportValue
+                  Fn::Sub: ${ProjectName}-${Environment}-EventsTableArn
   GenerateReportRole:
     Type: AWS::IAM::Role
     Properties:
@@ -119,8 +119,9 @@ Resources:
                       Fn::Sub: ${ProjectName}-${Environment}-ReportsBucketArn
               - Effect: Allow
                 Action:
-                  - lambda:InvokeFunction
-                Resource: !GetAtt SendReportFunction.Arn
+                  - sqs:SendMessage
+                Resource: !ImportValue
+                  Fn::Sub: "${ProjectName}-${Environment}-NotificationsQueueArn"
               - Effect: Allow
                 Action:
                   - sqs:ReceiveMessage
@@ -129,45 +130,6 @@ Resources:
                   - sqs:ChangeMessageVisibility
                 Resource: !ImportValue
                   Fn::Sub: ${ProjectName}-${Environment}-ReportQueueArn
-  SendReportRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub ${ProjectName}-${Environment}-SendReport-role
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: SendReport-least-privilege-policy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-${Environment}-SendReport:*
-              - Effect: Allow
-                Action:
-                  - s3:GetObject
-                Resource: !Sub
-                  - ${ReportsBucketArn}/*
-                  - ReportsBucketArn: !ImportValue
-                      Fn::Sub: ${ProjectName}-${Environment}-ReportsBucketArn
-              - Effect: Allow
-                Action:
-                  - dynamodb:GetItem
-                  - dynamodb:UpdateItem
-                Resource: !ImportValue
-                  Fn::Sub: ${ProjectName}-${Environment}-ReportsTableArn
-              - Effect: Allow
-                Action:
-                  - sqs:SendMessage
-                Resource: !ImportValue
-                  Fn::Sub: ${ProjectName}-${Environment}-NotificationsQueueArn
   CreateReportFunction:
     Type: AWS::Lambda::Function
     DependsOn: CreateReportLogGroup
@@ -242,43 +204,6 @@ Resources:
           Value: !Ref ProjectName
         - Key: Environment
           Value: !Ref Environment
-  SendReportFunction:
-    Type: AWS::Lambda::Function
-    DependsOn: SendReportLogGroup
-    Properties:
-      FunctionName: !Sub ${ProjectName}-${Environment}-SendReport
-      Runtime: python3.12
-      Handler: index.handler
-      Role: !GetAtt SendReportRole.Arn
-      Timeout: 30
-      MemorySize: 128
-      Architectures:
-        - arm64
-      Environment:
-        Variables:
-          EVENTS_TABLE: !ImportValue
-            Fn::Sub: ${ProjectName}-${Environment}-EventsTableName
-          REGISTRATIONS_TABLE: !ImportValue
-            Fn::Sub: ${ProjectName}-${Environment}-RegistrationsTableName
-          REPORTS_TABLE: !ImportValue
-            Fn::Sub: ${ProjectName}-${Environment}-ReportsTableName
-          REPORTS_BUCKET: !ImportValue
-            Fn::Sub: ${ProjectName}-${Environment}-ReportsBucketName
-          REPORT_QUEUE_URL: !ImportValue
-            Fn::Sub: ${ProjectName}-${Environment}-ReportQueueUrl
-          NOTIFICATIONS_QUEUE_URL: !ImportValue
-            Fn::Sub: ${ProjectName}-${Environment}-NotificationsQueueUrl
-          SES_SENDER_EMAIL: !Ref SenderEmail
-          FUNCTION_NAME: SendReport
-      Code:
-        S3Bucket:
-          Fn::ImportValue: !Sub "${ProjectName}-${Environment}-FrontendArtifactsBucketName"
-        S3Key: Lambda-Artifacts/dummy-lambda/dummy-lambda.zip
-      Tags:
-        - Key: Project
-          Value: !Ref ProjectName
-        - Key: Environment
-          Value: !Ref Environment
   GenerateReportEventSourceMapping:
     Type: AWS::Lambda::EventSourceMapping
     Properties:
@@ -304,11 +229,3 @@ Outputs:
     Value: !GetAtt GenerateReportFunction.Arn
     Export:
       Name: !Sub ${ProjectName}-${Environment}-GenerateReportFunctionArn
-  SendReportFunctionName:
-    Value: !Ref SendReportFunction
-    Export:
-      Name: !Sub ${ProjectName}-${Environment}-SendReportFunctionName
-  SendReportFunctionArn:
-    Value: !GetAtt SendReportFunction.Arn
-    Export:
-      Name: !Sub ${ProjectName}-${Environment}-SendReportFunctionArn

@@ -36,11 +36,6 @@ Resources:
     Properties:
       LogGroupName: !Sub /aws/lambda/${ProjectName}-${Environment}-UpdateEvent
       RetentionInDays: !Ref LambdaLogRetentionDays
-  DeleteEventLogGroup:
-    Type: AWS::Logs::LogGroup
-    Properties:
-      LogGroupName: !Sub /aws/lambda/${ProjectName}-${Environment}-DeleteEvent
-      RetentionInDays: !Ref LambdaLogRetentionDays
   UpdateEventStatusLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
@@ -53,7 +48,7 @@ Resources:
   SchedulerToNotificationsRole:
     Type: AWS::IAM::Role
     Properties:
-      RoleName: !Sub ${ProjectName}-${Environment}-scheduler-to-notifications
+      RoleName: !Sub ${ProjectName}-${Environment}-scheduler-execution-role
       AssumeRolePolicyDocument:
         Version: '2012-10-17'
         Statement:
@@ -62,14 +57,22 @@ Resources:
               Service: scheduler.amazonaws.com
             Action: sts:AssumeRole
       Policies:
-        - PolicyName: send-notification-messages
+        - PolicyName: scheduler-execution-policy
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              - Effect: Allow
-                Action: sqs:SendMessage
+              - Sid: SendNotificationMessages
+                Effect: Allow
+                Action:
+                  - sqs:SendMessage
                 Resource: !ImportValue
                   Fn::Sub: ${ProjectName}-${Environment}-NotificationsQueueArn
+
+              - Sid: InvokeUpdateEventStatus
+                Effect: Allow
+                Action:
+                  - lambda:InvokeFunction
+                Resource: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-${Environment}-UpdateEvent
   CreateEventRole:
     Type: AWS::IAM::Role
     Properties:
@@ -181,6 +184,7 @@ Resources:
                 Action:
                   - dynamodb:GetItem
                   - dynamodb:UpdateItem
+                  - dynamodb:DeleteItem
                   - dynamodb:Query
                 Resource:
                   - !ImportValue
@@ -214,56 +218,6 @@ Resources:
                 Condition:
                   StringEquals:
                     iam:PassedToService: scheduler.amazonaws.com
-  DeleteEventRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub ${ProjectName}-${Environment}-DeleteEvent-role
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: lambda.amazonaws.com
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: DeleteEvent-least-privilege-policy
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - logs:CreateLogStream
-                  - logs:PutLogEvents
-                Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-${Environment}-DeleteEvent:*
-              - Effect: Allow
-                Action:
-                  - dynamodb:GetItem
-                  - dynamodb:UpdateItem
-                  - dynamodb:DeleteItem
-                  - dynamodb:Query
-                Resource:
-                  - !ImportValue
-                    Fn::Sub: ${ProjectName}-${Environment}-EventsTableArn
-                  - !Sub
-                    - ${TableArn}/index/*
-                    - TableArn: !ImportValue
-                        Fn::Sub: ${ProjectName}-${Environment}-EventsTableArn
-                  - !ImportValue
-                    Fn::Sub: ${ProjectName}-${Environment}-RegistrationsTableArn
-                  - !Sub
-                    - ${TableArn}/index/*
-                    - TableArn: !ImportValue
-                        Fn::Sub: ${ProjectName}-${Environment}-RegistrationsTableArn
-              - Effect: Allow
-                Action:
-                  - sqs:SendMessage
-                Resource: !ImportValue
-                  Fn::Sub: ${ProjectName}-${Environment}-NotificationsQueueArn
-              - Effect: Allow
-                Action:
-                  - scheduler:DeleteSchedule
-                  - scheduler:GetSchedule
-                Resource: !Sub arn:aws:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/${ProjectName}-${Environment}-schedules/*
   UpdateEventStatusRole:
     Type: AWS::IAM::Role
     Properties:
@@ -328,8 +282,11 @@ Resources:
             Fn::Sub: ${ProjectName}-${Environment}-RegistrationsTableName
           NOTIFICATIONS_QUEUE_URL: !ImportValue
             Fn::Sub: ${ProjectName}-${Environment}-NotificationsQueueUrl
+          NOTIFICATIONS_QUEUE_ARN: !ImportValue
+            Fn::Sub: ${ProjectName}-${Environment}-NotificationsQueueArn
           SCHEDULER_GROUP_NAME: !Ref SchedulerGroup
-          SCHEDULER_TO_NOTIFICATIONS_ROLE_ARN: !GetAtt SchedulerToNotificationsRole.Arn
+          SCHEDULER_ROLE_ARN: !GetAtt SchedulerToNotificationsRole.Arn
+          STATUS_UPDATE_FUNCTION_ARN: !GetAtt UpdateEventFunction.Arn
           SES_SENDER_EMAIL: !Ref SenderEmail
           FUNCTION_NAME: CreateEvent
       Code:
@@ -362,7 +319,6 @@ Resources:
           NOTIFICATIONS_QUEUE_URL: !ImportValue
             Fn::Sub: ${ProjectName}-${Environment}-NotificationsQueueUrl
           SCHEDULER_GROUP_NAME: !Ref SchedulerGroup
-          SCHEDULER_TO_NOTIFICATIONS_ROLE_ARN: !GetAtt SchedulerToNotificationsRole.Arn
           SES_SENDER_EMAIL: !Ref SenderEmail
           FUNCTION_NAME: GetEvent
       Code:
@@ -394,8 +350,11 @@ Resources:
             Fn::Sub: ${ProjectName}-${Environment}-RegistrationsTableName
           NOTIFICATIONS_QUEUE_URL: !ImportValue
             Fn::Sub: ${ProjectName}-${Environment}-NotificationsQueueUrl
+          NOTIFICATIONS_QUEUE_ARN: !ImportValue
+            Fn::Sub: ${ProjectName}-${Environment}-NotificationsQueueArn
           SCHEDULER_GROUP_NAME: !Ref SchedulerGroup
-          SCHEDULER_TO_NOTIFICATIONS_ROLE_ARN: !GetAtt SchedulerToNotificationsRole.Arn
+          SCHEDULER_ROLE_ARN: !GetAtt SchedulerToNotificationsRole.Arn
+          STATUS_UPDATE_FUNCTION_ARN: !Sub arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:function:${ProjectName}-${Environment}-UpdateEvent
           SES_SENDER_EMAIL: !Ref SenderEmail
           FUNCTION_NAME: UpdateEvent
       Code:
@@ -407,111 +366,7 @@ Resources:
           Value: !Ref ProjectName
         - Key: Environment
           Value: !Ref Environment
-  DeleteEventFunction:
-    Type: AWS::Lambda::Function
-    DependsOn: DeleteEventLogGroup
-    Properties:
-      FunctionName: !Sub ${ProjectName}-${Environment}-DeleteEvent
-      Runtime: python3.12
-      Handler: index.handler
-      Role: !GetAtt DeleteEventRole.Arn
-      Timeout: 30
-      MemorySize: 128
-      Architectures:
-        - arm64
-      Environment:
-        Variables:
-          EVENTS_TABLE: !ImportValue
-            Fn::Sub: ${ProjectName}-${Environment}-EventsTableName
-          REGISTRATIONS_TABLE: !ImportValue
-            Fn::Sub: ${ProjectName}-${Environment}-RegistrationsTableName
-          NOTIFICATIONS_QUEUE_URL: !ImportValue
-            Fn::Sub: ${ProjectName}-${Environment}-NotificationsQueueUrl
-          SCHEDULER_GROUP_NAME: !Ref SchedulerGroup
-          SCHEDULER_TO_NOTIFICATIONS_ROLE_ARN: !GetAtt SchedulerToNotificationsRole.Arn
-          SES_SENDER_EMAIL: !Ref SenderEmail
-          FUNCTION_NAME: DeleteEvent
-      Code:
-        S3Bucket:
-          Fn::ImportValue: !Sub "${ProjectName}-${Environment}-FrontendArtifactsBucketName"
-        S3Key: Lambda-Artifacts/dummy-lambda/dummy-lambda.zip
-      Tags:
-        - Key: Project
-          Value: !Ref ProjectName
-        - Key: Environment
-          Value: !Ref Environment
-  UpdateEventStatusFunction:
-    Type: AWS::Lambda::Function
-    DependsOn: UpdateEventStatusLogGroup
-    Properties:
-      FunctionName: !Sub ${ProjectName}-${Environment}-UpdateEventStatus
-      Runtime: python3.12
-      Handler: index.handler
-      Role: !GetAtt UpdateEventStatusRole.Arn
-      Timeout: 120
-      MemorySize: 128
-      Architectures:
-        - arm64
-      Environment:
-        Variables:
-          EVENTS_TABLE: !ImportValue
-            Fn::Sub: ${ProjectName}-${Environment}-EventsTableName
-          REGISTRATIONS_TABLE: !ImportValue
-            Fn::Sub: ${ProjectName}-${Environment}-RegistrationsTableName
-          NOTIFICATIONS_QUEUE_URL: !ImportValue
-            Fn::Sub: ${ProjectName}-${Environment}-NotificationsQueueUrl
-          SCHEDULER_GROUP_NAME: !Ref SchedulerGroup
-          SCHEDULER_TO_NOTIFICATIONS_ROLE_ARN: !GetAtt SchedulerToNotificationsRole.Arn
-          SES_SENDER_EMAIL: !Ref SenderEmail
-          FUNCTION_NAME: UpdateEventStatus
-      Code:
-        S3Bucket:
-          Fn::ImportValue: !Sub "${ProjectName}-${Environment}-FrontendArtifactsBucketName"
-        S3Key: Lambda-Artifacts/dummy-lambda/dummy-lambda.zip
-      Tags:
-        - Key: Project
-          Value: !Ref ProjectName
-        - Key: Environment
-          Value: !Ref Environment
-  SchedulerInvokeUpdateStatusRole:
-    Type: AWS::IAM::Role
-    Properties:
-      RoleName: !Sub ${ProjectName}-${Environment}-scheduler-invoke-update-status
-      AssumeRolePolicyDocument:
-        Version: '2012-10-17'
-        Statement:
-          - Effect: Allow
-            Principal:
-              Service: scheduler.amazonaws.com
-            Action: sts:AssumeRole
-      Policies:
-        - PolicyName: invoke-update-status-lambda
-          PolicyDocument:
-            Version: '2012-10-17'
-            Statement:
-              - Effect: Allow
-                Action:
-                  - lambda:InvokeFunction
-                Resource: !GetAtt UpdateEventStatusFunction.Arn
-  UpdateEventStatusSchedule:
-    Type: AWS::Scheduler::Schedule
-    Properties:
-      Name: !Sub ${ProjectName}-${Environment}-update-event-status
-      GroupName: !Ref SchedulerGroup
-      FlexibleTimeWindow:
-        Mode: 'OFF'
-      ScheduleExpression: rate(5 minutes)
-      State: ENABLED
-      Target:
-        Arn: !GetAtt UpdateEventStatusFunction.Arn
-        RoleArn: !GetAtt SchedulerInvokeUpdateStatusRole.Arn
-  UpdateEventStatusLambdaPermissionForScheduler:
-    Type: AWS::Lambda::Permission
-    Properties:
-      Action: lambda:InvokeFunction
-      FunctionName: !Ref UpdateEventStatusFunction
-      Principal: scheduler.amazonaws.com
-      SourceArn: !Sub arn:aws:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/${ProjectName}-${Environment}-schedules/${ProjectName}-${Environment}-update-event-status
+
 Outputs:
   CreateEventFunctionName:
     Value: !Ref CreateEventFunction
@@ -537,22 +392,6 @@ Outputs:
     Value: !GetAtt UpdateEventFunction.Arn
     Export:
       Name: !Sub ${ProjectName}-${Environment}-UpdateEventFunctionArn
-  DeleteEventFunctionName:
-    Value: !Ref DeleteEventFunction
-    Export:
-      Name: !Sub ${ProjectName}-${Environment}-DeleteEventFunctionName
-  DeleteEventFunctionArn:
-    Value: !GetAtt DeleteEventFunction.Arn
-    Export:
-      Name: !Sub ${ProjectName}-${Environment}-DeleteEventFunctionArn
-  UpdateEventStatusFunctionName:
-    Value: !Ref UpdateEventStatusFunction
-    Export:
-      Name: !Sub ${ProjectName}-${Environment}-UpdateEventStatusFunctionName
-  UpdateEventStatusFunctionArn:
-    Value: !GetAtt UpdateEventStatusFunction.Arn
-    Export:
-      Name: !Sub ${ProjectName}-${Environment}-UpdateEventStatusFunctionArn
   SchedulerGroupName:
     Value: !Ref SchedulerGroup
     Export:

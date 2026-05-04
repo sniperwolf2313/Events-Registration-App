@@ -41,42 +41,65 @@ Resources:
           PolicyDocument:
             Version: '2012-10-17'
             Statement:
-              - Effect: Allow
+              - Sid: WriteLogs
+                Effect: Allow
                 Action:
                   - logs:CreateLogStream
                   - logs:PutLogEvents
                 Resource: !Sub arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/${ProjectName}-${Environment}-SendNotification:*
-              - Effect: Allow
+
+              - Sid: ReadEventsTable
+                Effect: Allow
                 Action:
                   - dynamodb:GetItem
+                Resource:
+                  Fn::ImportValue:
+                    Fn::Sub: ${ProjectName}-${Environment}-EventsTableArn
+
+              - Sid: QueryRegistrationsTable
+                Effect: Allow
+                Action:
                   - dynamodb:Query
                 Resource:
-                  - !ImportValue
-                    Fn::Sub: ${ProjectName}-${Environment}-NotificationTemplatesTableArn
-                  - !Sub
-                    - ${TableArn}/index/*
-                    - TableArn: !ImportValue
-                        Fn::Sub: ${ProjectName}-${Environment}-NotificationTemplatesTableArn
-              - Effect: Allow
+                  - Fn::ImportValue:
+                      Fn::Sub: ${ProjectName}-${Environment}-RegistrationsTableArn
+                  - Fn::Sub:
+                      - ${TableArn}/index/GSI2_EventStatusRegistrations
+                      - TableArn:
+                          Fn::ImportValue:
+                            Fn::Sub: ${ProjectName}-${Environment}-RegistrationsTableArn
+
+              - Sid: QueryNotificationTemplatesTable
+                Effect: Allow
                 Action:
-                  - s3:GetObject
-                Resource: !Sub
-                  - ${TemplatesBucketArn}/*
-                  - TemplatesBucketArn: !ImportValue
-                      Fn::Sub: ${ProjectName}-${Environment}-TemplatesFilesBucketArn
-              - Effect: Allow
+                  - dynamodb:Query
+                  - dynamodb:GetItem
+                Resource:
+                  - Fn::ImportValue:
+                      Fn::Sub: ${ProjectName}-${Environment}-NotificationTemplatesTableArn
+                  - Fn::Sub:
+                      - ${TableArn}/index/GSI1_TemplateTypeStatus
+                      - TableArn:
+                          Fn::ImportValue:
+                            Fn::Sub: ${ProjectName}-${Environment}-NotificationTemplatesTableArn
+
+              - Sid: SendEmailsWithSES
+                Effect: Allow
                 Action:
                   - ses:SendEmail
                   - ses:SendRawEmail
                 Resource: '*'
-              - Effect: Allow
+
+              - Sid: ConsumeNotificationsQueue
+                Effect: Allow
                 Action:
                   - sqs:ReceiveMessage
                   - sqs:DeleteMessage
                   - sqs:GetQueueAttributes
                   - sqs:ChangeMessageVisibility
-                Resource: !ImportValue
-                  Fn::Sub: ${ProjectName}-${Environment}-NotificationsQueueArn
+                Resource:
+                  Fn::ImportValue:
+                    Fn::Sub: ${ProjectName}-${Environment}-NotificationsQueueArn
   SendNotificationFunction:
     Type: AWS::Lambda::Function
     DependsOn: SendNotificationLogGroup
@@ -91,6 +114,10 @@ Resources:
         - arm64
       Environment:
         Variables:
+          EVENTS_TABLE: !ImportValue
+            Fn::Sub: ${ProjectName}-${Environment}-EventsTableName
+          REGISTRATIONS_TABLE: !ImportValue
+            Fn::Sub: ${ProjectName}-${Environment}-RegistrationsTableName
           NOTIFICATION_TEMPLATES_TABLE: !ImportValue
             Fn::Sub: ${ProjectName}-${Environment}-NotificationTemplatesTableName
           TEMPLATES_FILES_BUCKET: !ImportValue

@@ -136,7 +136,7 @@ Resources:
       ApiId: !Ref HttpApi
       IntegrationType: AWS_PROXY
       IntegrationUri: !ImportValue
-        Fn::Sub: ${ProjectName}-${Environment}-DeleteEventFunctionArn
+        Fn::Sub: ${ProjectName}-${Environment}-UpdateEventFunctionArn
       PayloadFormatVersion: '2.0'
   DeleteEventsEventidRoute:
     Type: AWS::ApiGatewayV2::Route
@@ -216,14 +216,6 @@ Resources:
       Action: lambda:InvokeFunction
       FunctionName: !ImportValue
         Fn::Sub: ${ProjectName}-${Environment}-CreateReportFunctionName
-      Principal: apigateway.amazonaws.com
-      SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*
-  DeleteEventApiPermission:
-    Type: AWS::Lambda::Permission
-    Properties:
-      Action: lambda:InvokeFunction
-      FunctionName: !ImportValue
-        Fn::Sub: ${ProjectName}-${Environment}-DeleteEventFunctionName
       Principal: apigateway.amazonaws.com
       SourceArn: !Sub arn:aws:execute-api:${AWS::Region}:${AWS::AccountId}:${HttpApi}/*/*
   GetEventApiPermission:
